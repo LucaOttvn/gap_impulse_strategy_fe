@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import {useQueryClient} from "@tanstack/react-query";
 import {
   type CandlestickData,
   ColorType,
@@ -14,81 +14,46 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import { Clock, ListTree } from "lucide-react";
-import {
-  type Dispatch,
-  type MouseEvent as ReactMouseEvent,
-  type SetStateAction,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { useChartPreferences } from "../../hooks/useChartPreferences.ts";
-import { BandsIndicator } from "../../lib/chart-plugins/bands-indicator/bands-indicator.ts";
-import { DeltaTooltipPrimitive } from "../../lib/chart-plugins/delta-tooltip/delta-tooltip.ts";
-import {
-  detectCrossings,
-  playAlertBeep,
-} from "../../lib/chart-plugins/drawing-tools/line-alerts.ts";
-import { DrawingToolsManager } from "../../lib/chart-plugins/drawing-tools/manager.ts";
-import { CrosshairHighlightPrimitive } from "../../lib/chart-plugins/highlight-bar-crosshair/highlight-bar-crosshair.ts";
-import { SessionBreaks } from "../../lib/chart-plugins/session-breaks/session-breaks.ts";
-import { SessionHighlighting } from "../../lib/chart-plugins/session-highlighting/session-highlighting.ts";
-import { TooltipPrimitive } from "../../lib/chart-plugins/tooltip/tooltip.ts";
-import type { IndicatorType } from "../../lib/indicators.ts";
-import { cn } from "../../lib/utils.ts";
-import { api } from "../../services/api.ts";
-import { queryKeys } from "../../services/queries.ts";
-import type { Candle, Order, Position, Symbol } from "../../services/schemas.ts";
-import { toast } from "../../services/toast.ts";
-import {
-  CHART_COLORS,
-  type DrawingLine,
-  type DrawingTool,
-  type MagnetMode,
-  mergeChartColors,
-  TF_INTERVAL_MS,
-  type Timeframe,
-} from "./constants.ts";
-import { ChartContextMenu } from "./ChartContextMenu.tsx";
-import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
-import {
-  DrawingContextMenu,
-  DrawingFloatingToolbar,
-  DrawingSettingsDialog,
-} from "./DrawingToolsOverlay.tsx";
-import { DrawingToolRail } from "./DrawingToolRail.tsx";
-import { DRAWING_STYLES_EVENT, getStyleDefaults } from "./drawingStyles.ts";
-import { NewsOverlay } from "./NewsOverlay.tsx";
-import { ObjectTreePanel } from "./ObjectTreePanel.tsx";
-import { useChallengeLevels } from "./useChallengeLevels.ts";
-import { useIndicators } from "./useIndicators.ts";
-import { useNewsOverlay } from "./useNewsOverlay.ts";
-import { useSlTpDrag } from "./useSlTpDrag.ts";
-import {
-  formatCountdown,
-  getCandleBucketTime,
-  getMinMove,
-  toUnixMs,
-  toUnixSeconds,
-} from "./utils.ts";
+import {Clock, ListTree} from "lucide-react";
+import {type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {useChartPreferences} from "../../hooks/useChartPreferences.ts";
+import {BandsIndicator} from "../../lib/chart-plugins/bands-indicator/bands-indicator.ts";
+import {DeltaTooltipPrimitive} from "../../lib/chart-plugins/delta-tooltip/delta-tooltip.ts";
+import {detectCrossings, playAlertBeep} from "../../lib/chart-plugins/drawing-tools/line-alerts.ts";
+import {DrawingToolsManager} from "../../lib/chart-plugins/drawing-tools/manager.ts";
+import {CrosshairHighlightPrimitive} from "../../lib/chart-plugins/highlight-bar-crosshair/highlight-bar-crosshair.ts";
+import {SessionBreaks} from "../../lib/chart-plugins/session-breaks/session-breaks.ts";
+import {SessionHighlighting} from "../../lib/chart-plugins/session-highlighting/session-highlighting.ts";
+import {TooltipPrimitive} from "../../lib/chart-plugins/tooltip/tooltip.ts";
+import type {IndicatorType} from "../../lib/indicators.ts";
+import {cn} from "../../lib/utils.ts";
+import {api} from "../../services/api.ts";
+import {queryKeys} from "../../services/queries.ts";
+import type {Candle, Order, Position, Symbol} from "../../services/schemas.ts";
+import {toast} from "../../services/toast.ts";
+import {CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe} from "./constants.ts";
+import {ChartContextMenu} from "./ChartContextMenu.tsx";
+import {ChartSettingsDialog} from "./ChartSettingsDialog.tsx";
+import {DrawingContextMenu, DrawingFloatingToolbar, DrawingSettingsDialog} from "./DrawingToolsOverlay.tsx";
+import {DrawingToolRail} from "./DrawingToolRail.tsx";
+import {DRAWING_STYLES_EVENT, getStyleDefaults} from "./drawingStyles.ts";
+import {NewsOverlay} from "./NewsOverlay.tsx";
+import {ObjectTreePanel} from "./ObjectTreePanel.tsx";
+import {useChallengeLevels} from "./useChallengeLevels.ts";
+import {useIndicators} from "./useIndicators.ts";
+import {useNewsOverlay} from "./useNewsOverlay.ts";
+import {useSlTpDrag} from "./useSlTpDrag.ts";
+import {formatCountdown, getCandleBucketTime, getMinMove, toUnixMs, toUnixSeconds} from "./utils.ts";
 
 // ── Staleness recovery ─────────────────────────────────────────────────────
 // Shared by the live-candle and tick-smoothing effects so either path can
 // trigger a REST refetch when the chart falls more than 1.5 intervals behind
 // wall-clock. Throttled to ≤1 refetch per 3 s across both callers.
-function requestGapRefetch(
-  refAtRef: { current: number },
-  qc: ReturnType<typeof useQueryClient>,
-  symbol: string,
-  timeframe: string,
-): void {
+function requestGapRefetch(refAtRef: {current: number}, qc: ReturnType<typeof useQueryClient>, symbol: string, timeframe: string): void {
   const now = Date.now();
   if (now - refAtRef.current <= 3_000) return;
   refAtRef.current = now;
-  qc.invalidateQueries({ queryKey: queryKeys.market.candles(symbol, timeframe) });
+  qc.invalidateQueries({queryKey: queryKeys.market.candles(symbol, timeframe)});
 }
 
 // ── Scroll-triggered history loading ─────────────────────────
@@ -113,11 +78,7 @@ function getSeriesOldestMs(series: ISeriesApi<"Candlestick">): number {
   return data.length === 0 ? 0 : (data[0]!.time as number) * 1_000;
 }
 
-function isLoadMoreEligible(
-  state: LoadMoreState,
-  series: ISeriesApi<"Candlestick">,
-  range: LogicalRange,
-): boolean {
+function isLoadMoreEligible(state: LoadMoreState, series: ISeriesApi<"Candlestick">, range: LogicalRange): boolean {
   if (state.loading || state.noMoreData) return false;
   const barsInfo = series.barsInLogicalRange(range);
   if ((barsInfo?.barsBefore ?? Number.POSITIVE_INFINITY) > LOAD_MORE_THRESHOLD) return false;
@@ -129,16 +90,10 @@ function isLoadMoreEligible(
   return state.lastFetchedBeforeMs === 0 || oldestMs < state.lastFetchedBeforeMs;
 }
 
-function fetchOlderRange(
-  symbol: string,
-  timeframe: string,
-  toMs: number,
-  state: LoadMoreState,
-  onLoaded: (bars: Candle[]) => void,
-): void {
+function fetchOlderRange(symbol: string, timeframe: string, toMs: number, state: LoadMoreState, onLoaded: (bars: Candle[]) => void): void {
   const windowMs = LOAD_MORE_WINDOW * (TF_INTERVAL_MS[timeframe as Timeframe] ?? 60_000);
   api
-    .getCandles(symbol, timeframe, undefined, { fromMs: toMs - windowMs, toMs })
+    .getCandles(symbol, timeframe, undefined, {fromMs: toMs - windowMs, toMs})
     .then((bars) => {
       if (bars.length === 0) {
         // Empty window — could be a gap (e.g. Forex weekend) rather than true
@@ -168,9 +123,9 @@ function fetchOlderRange(
 
 function makeHistoryLoader(
   symbol: string,
-  timeframeRef: { current: string },
-  seriesRef: { current: ISeriesApi<"Candlestick"> | null },
-  stateRef: { current: LoadMoreState },
+  timeframeRef: {current: string},
+  seriesRef: {current: ISeriesApi<"Candlestick"> | null},
+  stateRef: {current: LoadMoreState},
   onLoaded: (bars: Candle[]) => void,
 ): (range: LogicalRange | null) => void {
   return (range) => {
@@ -216,7 +171,7 @@ export interface ChartPanelProps {
   stayInDrawingMode?: boolean;
   positions: Position[];
   orders: Order[];
-  tick?: { bid: number; ask: number; timestamp: number };
+  tick?: {bid: number; ask: number; timestamp: number};
   liveCandle?: {
     open: number;
     high: number;
@@ -227,10 +182,7 @@ export interface ChartPanelProps {
   };
   pipDigits: number;
   symbolInfo?: Symbol;
-  onModifyPosition?: (
-    positionId: string,
-    mods: { takeProfit?: number | null; stopLoss?: number | null },
-  ) => void;
+  onModifyPosition?: (positionId: string, mods: {takeProfit?: number | null; stopLoss?: number | null}) => void;
   replayTradeEvents?: Array<{
     id: string;
     type: "entry" | "exit" | "violation";
@@ -270,8 +222,7 @@ function getForexSessionColor(utcHour: number): string {
   return "transparent";
 }
 
-const forexSessionHighlighter = (date: Time): string =>
-  getForexSessionColor(new Date((date as number) * 1000).getUTCHours());
+const forexSessionHighlighter = (date: Time): string => getForexSessionColor(new Date((date as number) * 1000).getUTCHours());
 
 interface PluginBuildCtx {
   isDark: boolean;
@@ -294,7 +245,7 @@ function buildSessionBreaks(ctx: PluginBuildCtx): ISeriesPrimitive<Time> | null 
 }
 
 const PLUGIN_FACTORIES: Record<string, (ctx: PluginBuildCtx) => ISeriesPrimitive<Time> | null> = {
-  crosshair: ({ isDark }) =>
+  crosshair: ({isDark}) =>
     new CrosshairHighlightPrimitive({
       color: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
     }),
@@ -322,7 +273,7 @@ interface OhlcvLegend {
 
 function candleToLegend(c: CandlestickData<Time>, volume: number): OhlcvLegend {
   const change = c.open ? ((c.close - c.open) / c.open) * 100 : 0;
-  return { o: c.open, h: c.high, l: c.low, c: c.close, v: volume, change };
+  return {o: c.open, h: c.high, l: c.low, c: c.close, v: volume, change};
 }
 
 // ── Real-time series update helpers ──────────────────────────────────────────
@@ -331,7 +282,7 @@ function candleToLegend(c: CandlestickData<Time>, volume: number): OhlcvLegend {
 // pure relocations that operate on a shared context handed in by the effect.
 
 type ChartColors = (typeof CHART_COLORS)["dark"];
-type Ref<T> = { current: T };
+type Ref<T> = {current: T};
 type LiveCandleData = {
   open: number;
   high: number;
@@ -340,7 +291,7 @@ type LiveCandleData = {
   volume: number;
   timestamp: number;
 };
-type TickData = { bid: number; ask: number; timestamp: number };
+type TickData = {bid: number; ask: number; timestamp: number};
 
 interface RtCtx {
   series: ISeriesApi<"Candlestick">;
@@ -404,13 +355,7 @@ function applyServerCandle(live: LiveCandleData, ctx: RtCtx): void {
 }
 
 // Build the tick-smoothed bar for the current bucket (continuation or fresh).
-function buildTickBar(
-  prev: CandlestickData<Time>,
-  isContinuation: boolean,
-  bucketTime: Time,
-  mid: number,
-  ctx: RtCtx,
-): CandlestickData<Time> | null {
+function buildTickBar(prev: CandlestickData<Time>, isContinuation: boolean, bucketTime: Time, mid: number, ctx: RtCtx): CandlestickData<Time> | null {
   if (isContinuation) {
     return {
       time: bucketTime,
@@ -436,12 +381,7 @@ function buildTickBar(
 
 // A new bucket has no aggregated volume yet — seed it at 0 so a fresh candle
 // never inherits the previous bar's full-height volume.
-function paintTickVolume(
-  bar: CandlestickData<Time>,
-  isContinuation: boolean,
-  bucketTime: Time,
-  ctx: RtCtx,
-): void {
+function paintTickVolume(bar: CandlestickData<Time>, isContinuation: boolean, bucketTime: Time, ctx: RtCtx): void {
   if (!ctx.volume) return;
   if (!isContinuation) ctx.legendVol.current = 0;
   try {
@@ -492,12 +432,7 @@ function removePriceLineSafe(ref: Ref<IPriceLine | null>, series: ISeriesApi<"Ca
 
 // Move an existing price line in place (applyOptions) or create it — avoids the
 // remove+create churn that flickers the chart at tick rate.
-function upsertPriceLine(
-  ref: Ref<IPriceLine | null>,
-  series: ISeriesApi<"Candlestick">,
-  enabled: boolean,
-  opts: Parameters<ISeriesApi<"Candlestick">["createPriceLine"]>[0],
-): void {
+function upsertPriceLine(ref: Ref<IPriceLine | null>, series: ISeriesApi<"Candlestick">, enabled: boolean, opts: Parameters<ISeriesApi<"Candlestick">["createPriceLine"]>[0]): void {
   if (!enabled) {
     removePriceLineSafe(ref, series);
     return;
@@ -513,11 +448,7 @@ function upsertPriceLine(
   ref.current = series.createPriceLine(opts);
 }
 
-function applyBidAskLines(
-  tick: TickData | undefined,
-  prefs: { showBidLine: boolean; showAskLine: boolean },
-  ctx: RtCtx,
-): void {
+function applyBidAskLines(tick: TickData | undefined, prefs: {showBidLine: boolean; showAskLine: boolean}, ctx: RtCtx): void {
   const series = ctx.series;
   if (!tick) {
     removePriceLineSafe(ctx.bidLine, series);
@@ -568,12 +499,7 @@ function detachPlugins(series: ISeriesApi<"Candlestick">, list: ISeriesPrimitive
   }
 }
 
-function attachPlugins(
-  series: ISeriesApi<"Candlestick">,
-  ids: string[],
-  ctx: PluginBuildCtx,
-  list: ISeriesPrimitive<Time>[],
-): void {
+function attachPlugins(series: ISeriesApi<"Candlestick">, ids: string[], ctx: PluginBuildCtx, list: ISeriesPrimitive<Time>[]): void {
   for (const id of ids) {
     const p = buildPlugin(id, ctx);
     if (p) {
@@ -594,13 +520,10 @@ function attachPlugins(
 function liveBarFrom(live: LiveCandleData): CandlestickData<Time> | null {
   const ts = toUnixSeconds(live.timestamp);
   if (Number.isNaN(ts) || ts <= 0) return null;
-  return { time: ts as Time, open: live.open, high: live.high, low: live.low, close: live.close };
+  return {time: ts as Time, open: live.open, high: live.high, low: live.low, close: live.close};
 }
 
-function legendFromSeries(
-  chartData: CandlestickData<Time>[],
-  volumeData: HistogramData<Time>[],
-): OhlcvLegend | null {
+function legendFromSeries(chartData: CandlestickData<Time>[], volumeData: HistogramData<Time>[]): OhlcvLegend | null {
   const last = chartData[chartData.length - 1];
   if (!last) return null;
   const vol = volumeData.length > 0 ? (volumeData[volumeData.length - 1]?.value ?? 0) : 0;
@@ -629,11 +552,7 @@ function reapplyLive(live: LiveCandleData | undefined, ctx: RtCtx): void {
 
 // Replay the buffered live candle immediately after history is painted so the
 // last bar isn't stuck at the final historical close until the next tick.
-function replayBufferedLive(
-  buffered: LiveCandleData | undefined,
-  chartData: CandlestickData<Time>[],
-  ctx: RtCtx,
-): void {
+function replayBufferedLive(buffered: LiveCandleData | undefined, chartData: CandlestickData<Time>[], ctx: RtCtx): void {
   if (!buffered) return;
   const liveTs = toUnixSeconds(buffered.timestamp);
   const lastHistBarSec = (chartData[chartData.length - 1]?.time as number) ?? 0;
@@ -651,19 +570,16 @@ function replayBufferedLive(
 
 // If the freshest bar is >2 intervals stale, schedule one delayed refetch to
 // close the gap before any live CandleUpdate paints over it. Throttled to 3 s.
-function scheduleStaleRefetch(
-  chartData: CandlestickData<Time>[],
-  ctx: RtCtx,
-): (() => void) | undefined {
+function scheduleStaleRefetch(chartData: CandlestickData<Time>[], ctx: RtCtx): (() => void) | undefined {
   const lastBarSec = (chartData[chartData.length - 1]?.time as number) ?? 0;
   const nowSec = Math.floor(Date.now() / 1000);
   if (lastBarSec <= 0 || nowSec - lastBarSec <= intervalSecOf(ctx.timeframe) * 2) return undefined;
   const now = Date.now();
   if (now - ctx.gapAt.current <= 3_000) return undefined;
   ctx.gapAt.current = now;
-  const { symbol, timeframe, qc } = ctx;
+  const {symbol, timeframe, qc} = ctx;
   const timer = window.setTimeout(() => {
-    qc.invalidateQueries({ queryKey: queryKeys.market.candles(symbol, timeframe) });
+    qc.invalidateQueries({queryKey: queryKeys.market.candles(symbol, timeframe)});
   }, 1_500);
   return () => window.clearTimeout(timer);
 }
@@ -698,16 +614,7 @@ function clearPriceLines(series: ISeriesApi<"Candlestick">, list: IPriceLine[]):
 }
 
 // One SL or TP line for a position, registered in the drag-to-edit map.
-function addSlTpLine(
-  series: ISeriesApi<"Candlestick">,
-  pos: Position,
-  field: SlTpField,
-  price: number,
-  pnl: number,
-  out: IPriceLine[],
-  map: SlTpMap,
-  colors: ChartColors,
-): void {
+function addSlTpLine(series: ISeriesApi<"Candlestick">, pos: Position, field: SlTpField, price: number, pnl: number, out: IPriceLine[], map: SlTpMap, colors: ChartColors): void {
   const isTp = field === "takeProfit";
   const line = series.createPriceLine({
     price,
@@ -729,13 +636,7 @@ function addSlTpLine(
   });
 }
 
-function addPositionOverlay(
-  series: ISeriesApi<"Candlestick">,
-  pos: Position,
-  opts: OverlayOpts,
-  out: IPriceLine[],
-  map: SlTpMap,
-): void {
+function addPositionOverlay(series: ISeriesApi<"Candlestick">, pos: Position, opts: OverlayOpts, out: IPriceLine[], map: SlTpMap): void {
   if (pos.symbolName !== opts.symbol || !Number.isFinite(pos.entryPrice)) return;
   out.push(
     series.createPriceLine({
@@ -748,39 +649,17 @@ function addPositionOverlay(
     }),
   );
   const direction = pos.side === "LONG" ? 1 : -1;
-  const pnlAt = (target: number) =>
-    parseFloat(
-      ((target - pos.entryPrice) * direction * pos.quantity * opts.contractSize).toFixed(2),
-    );
+  const pnlAt = (target: number) => parseFloat(((target - pos.entryPrice) * direction * pos.quantity * opts.contractSize).toFixed(2));
   if (typeof pos.takeProfit === "number" && Number.isFinite(pos.takeProfit)) {
-    addSlTpLine(
-      series,
-      pos,
-      "takeProfit",
-      pos.takeProfit,
-      pnlAt(pos.takeProfit),
-      out,
-      map,
-      opts.colors,
-    );
+    addSlTpLine(series, pos, "takeProfit", pos.takeProfit, pnlAt(pos.takeProfit), out, map, opts.colors);
   }
   if (typeof pos.stopLoss === "number" && Number.isFinite(pos.stopLoss)) {
     addSlTpLine(series, pos, "stopLoss", pos.stopLoss, pnlAt(pos.stopLoss), out, map, opts.colors);
   }
 }
 
-function addOrderOverlay(
-  series: ISeriesApi<"Candlestick">,
-  ord: Order,
-  symbol: string,
-  orderColor: string,
-  out: IPriceLine[],
-): void {
-  if (
-    ord.symbolName !== symbol ||
-    ord.status !== "PENDING" ||
-    !Number.isFinite(ord.price as number)
-  ) {
+function addOrderOverlay(series: ISeriesApi<"Candlestick">, ord: Order, symbol: string, orderColor: string, out: IPriceLine[]): void {
+  if (ord.symbolName !== symbol || ord.status !== "PENDING" || !Number.isFinite(ord.price as number)) {
     return;
   }
   out.push(
@@ -799,12 +678,7 @@ function addOrderOverlay(
 
 // Crosshair left the series — restore the legend to the latest live bar exactly
 // once so it doesn't stay frozen on the last hovered candle.
-function restoreLegendOnLeave(
-  restored: Ref<boolean>,
-  lastCandle: Ref<CandlestickData<Time> | null>,
-  legendVol: Ref<number>,
-  setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>,
-): void {
+function restoreLegendOnLeave(restored: Ref<boolean>, lastCandle: Ref<CandlestickData<Time> | null>, legendVol: Ref<number>, setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>): void {
   if (!restored.current && lastCandle.current) {
     setLegend(candleToLegend(lastCandle.current, legendVol.current));
   }
@@ -857,35 +731,16 @@ function buildReplayMarker(ev: ReplayTradeEvent, timeframe: Timeframe): SeriesMa
 // Extracted so the legend's per-value colour ternaries live here instead of
 // inflating the ChartPanel render function's cognitive complexity.
 
-function OhlcvCell({
-  label,
-  value,
-  digits,
-  up,
-  bold,
-}: {
-  label: string;
-  value: number;
-  digits: number;
-  up: boolean;
-  bold?: boolean;
-}) {
+function OhlcvCell({label, value, digits, up, bold}: {label: string; value: number; digits: number; up: boolean; bold?: boolean}) {
   return (
     <>
       <span className="text-muted-foreground/70">{label}</span>
-      <span
-        className={cn(
-          up ? "text-[#0ecb81]" : "text-[#f6465d]",
-          bold ? "font-semibold" : "font-medium",
-        )}
-      >
-        {value.toFixed(digits)}
-      </span>
+      <span className={cn(up ? "text-[#0ecb81]" : "text-[#f6465d]", bold ? "font-semibold" : "font-medium")}>{value.toFixed(digits)}</span>
     </>
   );
 }
 
-function OhlcvLegendRow({ legend, pipDigits }: { legend: OhlcvLegend; pipDigits: number }) {
+function OhlcvLegendRow({legend, pipDigits}: {legend: OhlcvLegend; pipDigits: number}) {
   const up = legend.c >= legend.o;
   return (
     <>
@@ -893,9 +748,7 @@ function OhlcvLegendRow({ legend, pipDigits }: { legend: OhlcvLegend; pipDigits:
       <OhlcvCell label="H" value={legend.h} digits={pipDigits} up={up} />
       <OhlcvCell label="L" value={legend.l} digits={pipDigits} up={up} />
       <OhlcvCell label="C" value={legend.c} digits={pipDigits} up={up} bold />
-      <span
-        className={cn("font-semibold", legend.change >= 0 ? "text-[#0ecb81]" : "text-[#f6465d]")}
-      >
+      <span className={cn("font-semibold", legend.change >= 0 ? "text-[#0ecb81]" : "text-[#f6465d]")}>
         {legend.change >= 0 ? "+" : ""}
         {legend.change.toFixed(2)}%
       </span>
@@ -909,7 +762,7 @@ function OhlcvLegendRow({ legend, pipDigits }: { legend: OhlcvLegend; pipDigits:
   );
 }
 
-function BidAskRow({ tick, pipDigits }: { tick: TickData; pipDigits: number }) {
+function BidAskRow({tick, pipDigits}: {tick: TickData; pipDigits: number}) {
   const spread = ((tick.ask - tick.bid) * 10 ** pipDigits).toFixed(1);
   return (
     <div className="flex items-center gap-2 text-[10px] font-mono">
@@ -947,9 +800,7 @@ function ChartLegendHeader({
   return (
     <div className="absolute top-2 left-3 z-10 pointer-events-none select-none">
       <div className="flex items-center gap-2 text-[11px] font-mono leading-none mb-1">
-        <span className="text-foreground font-bold text-[13px] tracking-tight">
-          {selectedSymbol}
-        </span>
+        <span className="text-foreground font-bold text-[13px] tracking-tight">{selectedSymbol}</span>
         <span className="text-muted-foreground font-medium">{timeframe}</span>
         {legend && showOhlcLegend && <OhlcvLegendRow legend={legend} pipDigits={pipDigits} />}
         {countdown && showCountdown && (
@@ -988,25 +839,9 @@ function DrawingOverlays({
 }) {
   if (!drawing) return null;
   if (showSettings) {
-    return (
-      <DrawingSettingsDialog
-        drawing={drawing}
-        currentTf={currentTf}
-        onUpdate={onUpdate}
-        onRemove={onRemove}
-        onClose={onCloseSettings}
-      />
-    );
+    return <DrawingSettingsDialog drawing={drawing} currentTf={currentTf} onUpdate={onUpdate} onRemove={onRemove} onClose={onCloseSettings} />;
   }
-  return (
-    <DrawingFloatingToolbar
-      drawing={drawing}
-      onUpdate={onUpdate}
-      onClone={onClone}
-      onRemove={onRemove}
-      onOpenSettings={onOpenSettings}
-    />
-  );
+  return <DrawingFloatingToolbar drawing={drawing} onUpdate={onUpdate} onClone={onClone} onRemove={onRemove} onOpenSettings={onOpenSettings} />;
 }
 
 // Object-tree toggle button + panel. Extracted so the open/close branching
@@ -1041,10 +876,7 @@ function ObjectTreeOverlay({
         type="button"
         title="Object tree (drawings)"
         onClick={onToggle}
-        className={cn(
-          "absolute bottom-2 left-2 z-10 p-1.5 rounded-md border border-border bg-card/90 shadow",
-          open ? "text-primary" : "text-muted-foreground hover:text-foreground",
-        )}
+        className={cn("absolute bottom-2 left-2 z-10 p-1.5 rounded-md border border-border bg-card/90 shadow", open ? "text-primary" : "text-muted-foreground hover:text-foreground")}
       >
         <ListTree className="h-3.5 w-3.5" />
       </button>
@@ -1152,10 +984,7 @@ export function ChartPanel({
   // Theme palette with the user's Chart Settings color overrides applied.
   // Everything downstream (chart options, bid/ask lines, position overlays,
   // volume bars) reads from this merged object.
-  const colors = useMemo(
-    () => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs),
-    [isDark, chartPrefs],
-  );
+  const colors = useMemo(() => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs), [isDark, chartPrefs]);
 
   // Reset historical extension whenever symbol or timeframe changes so stale
   // out-of-range candles from the previous view are never mixed into new data.
@@ -1174,32 +1003,21 @@ export function ChartPanel({
   const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([]);
   const [showDrawingSettings, setShowDrawingSettings] = useState(false);
   const [showObjectTree, setShowObjectTree] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{id: string; x: number; y: number} | null>(null);
 
   // ── Chart-wide context menu + settings dialog ──
   // When a right-click lands on a drawing the DrawingToolsManager opens the
   // drawing menu and sets this flag synchronously (native listeners fire before
   // React's delegated onContextMenu), so the chart menu stays closed.
   const drawingMenuOpenedRef = useRef(false);
-  const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number | null } | null>(
-    null,
-  );
+  const [chartMenu, setChartMenu] = useState<{x: number; y: number; price: number | null} | null>(null);
   const [showChartSettings, setShowChartSettings] = useState(false);
   // The style toolbar / settings dialog only apply to a single selection.
-  const selectedDrawing = useMemo(
-    () =>
-      selectedDrawingIds.length === 1
-        ? (drawings.find((d) => d.id === selectedDrawingIds[0]) ?? null)
-        : null,
-    [drawings, selectedDrawingIds],
-  );
+  const selectedDrawing = useMemo(() => (selectedDrawingIds.length === 1 ? (drawings.find((d) => d.id === selectedDrawingIds[0]) ?? null) : null), [drawings, selectedDrawingIds]);
 
   // Drawings actually shown on this chart: not hidden, and either visible on
   // all timeframes or scoped to the current one.
-  const visibleDrawings = useMemo(
-    () => drawings.filter((d) => !d.hidden && (d.visibility !== "tf" || d.createdTf === timeframe)),
-    [drawings, timeframe],
-  );
+  const visibleDrawings = useMemo(() => drawings.filter((d) => !d.hidden && (d.visibility !== "tf" || d.createdTf === timeframe)), [drawings, timeframe]);
 
   // Stable refs so the chart-create effect doesn't re-run on every parent render
   // when these props are unstable (e.g. inline onAddDrawing).
@@ -1272,7 +1090,7 @@ export function ChartPanel({
     (d: DrawingLine, dir: "front" | "back") => {
       const zs = drawings.map((x) => x.zIndex ?? 0);
       const zIndex = dir === "front" ? Math.max(...zs, 0) + 1 : Math.min(...zs, 0) - 1;
-      onUpdateDrawing?.({ ...d, zIndex });
+      onUpdateDrawing?.({...d, zIndex});
     },
     [drawings, onUpdateDrawing],
   );
@@ -1286,32 +1104,12 @@ export function ChartPanel({
   // ── Extracted hooks ────────────────────────────────────────
   // Merge scroll-loaded historical extension (older) with the live data (newer).
   // useChartData deduplicates by timestamp, so overlap is safe.
-  const allCandles = useMemo(
-    () => (historicalExtra.length === 0 ? candles : [...historicalExtra, ...candles]),
-    [historicalExtra, candles],
-  );
-  const { chartData, volumeData } = useChartData(allCandles, colors);
+  const allCandles = useMemo(() => (historicalExtra.length === 0 ? candles : [...historicalExtra, ...candles]), [historicalExtra, candles]);
+  const {chartData, volumeData} = useChartData(allCandles, colors);
 
-  const {
-    newsConfig,
-    setNewsConfig,
-    showNewsConfigDialog,
-    setShowNewsConfigDialog,
-    newsPopup,
-    setNewsPopup,
-  } = useNewsOverlay(containerRef, chartRef, selectedSymbol, isDark, chartData);
+  const {newsConfig, setNewsConfig, showNewsConfigDialog, setShowNewsConfigDialog, newsPopup, setNewsPopup} = useNewsOverlay(containerRef, chartRef, selectedSymbol, isDark, chartData);
 
-  const dragPrice = useSlTpDrag(
-    containerRef,
-    chartRef,
-    candleSeriesRef,
-    slTpLinesRef,
-    drawingTool,
-    onModifyPosition,
-    pipDigits,
-    symbolInfo,
-    chartEpoch,
-  );
+  const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
 
   // ── Challenge-aware rule levels (daily loss / max DD / profit target) ──
   const challengeFlags = useMemo(
@@ -1321,13 +1119,7 @@ export function ChartPanel({
       maxDrawdown: chartPrefs.challengeMaxDrawdownLine,
       profitTarget: chartPrefs.challengeProfitTargetLine,
     }),
-    [
-      chartPrefs.challengeOverlay,
-      chartPrefs.challengeDailyLossLine,
-      chartPrefs.challengeMaxDrawdownLine,
-      chartPrefs.challengeProfitTargetLine,
-      accountId,
-    ],
+    [chartPrefs.challengeOverlay, chartPrefs.challengeDailyLossLine, chartPrefs.challengeMaxDrawdownLine, chartPrefs.challengeProfitTargetLine, accountId],
   );
   useChallengeLevels({
     accountId,
@@ -1351,14 +1143,14 @@ export function ChartPanel({
     const rect = e.currentTarget.getBoundingClientRect();
     const raw = candleSeriesRef.current?.coordinateToPrice(e.clientY - rect.top);
     const price = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-    setChartMenu({ x: e.clientX, y: e.clientY, price });
+    setChartMenu({x: e.clientX, y: e.clientY, price});
   }, []);
 
   const handleResetView = useCallback(() => {
     const chart = chartRef.current;
     if (!chart) return;
     chart.timeScale().resetTimeScale();
-    chart.priceScale("right").applyOptions({ autoScale: true });
+    chart.priceScale("right").applyOptions({autoScale: true});
     chart.timeScale().scrollToRealTime();
   }, []);
 
@@ -1439,14 +1231,14 @@ export function ChartPanel({
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: colors.background },
+        background: {type: ColorType.Solid, color: colors.background},
         textColor: colors.text,
         fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: colors.grid, style: LineStyle.Dotted },
-        horzLines: { color: colors.grid, style: LineStyle.Dotted },
+        vertLines: {color: colors.grid, style: LineStyle.Dotted},
+        horzLines: {color: colors.grid, style: LineStyle.Dotted},
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -1467,7 +1259,7 @@ export function ChartPanel({
       },
       rightPriceScale: {
         borderColor: colors.grid,
-        scaleMargins: { top: 0.06, bottom: 0.18 },
+        scaleMargins: {top: 0.06, bottom: 0.18},
         autoScale: true,
         alignLabels: true,
         borderVisible: true,
@@ -1502,8 +1294,8 @@ export function ChartPanel({
       handleScale: {
         mouseWheel: true,
         pinch: true,
-        axisPressedMouseMove: { time: true, price: true },
-        axisDoubleClickReset: { time: true, price: true },
+        axisPressedMouseMove: {time: true, price: true},
+        axisDoubleClickReset: {time: true, price: true},
       },
     });
 
@@ -1537,11 +1329,11 @@ export function ChartPanel({
 
     // Volume histogram at the bottom of the chart
     const volumeSeries = chart.addHistogramSeries({
-      priceFormat: { type: "volume" },
+      priceFormat: {type: "volume"},
       priceScaleId: "volume",
     });
     chart.priceScale("volume").applyOptions({
-      scaleMargins: { top: 0.85, bottom: 0 },
+      scaleMargins: {top: 0.85, bottom: 0},
     });
     volumeSeriesRef.current = volumeSeries;
 
@@ -1595,7 +1387,7 @@ export function ChartPanel({
         onContextMenu: (id, clientX, clientY) => {
           drawingMenuOpenedRef.current = true;
           setSelectedDrawingIds([id]);
-          setContextMenu({ id, x: clientX, y: clientY });
+          setContextMenu({id, x: clientX, y: clientY});
         },
         onSelectTool: (t) => onDrawingToolSelectRef.current?.(t),
         onUndo: () => onUndoDrawingRef.current?.(),
@@ -1615,15 +1407,9 @@ export function ChartPanel({
     // symbol/timeframe/theme change: the cleanup sets it to true before
     // unsubscribing so any in-flight `onLoaded` callback is silently dropped.
     let historyLoadCancelled = false;
-    const handleRangeChange = makeHistoryLoader(
-      selectedSymbol,
-      timeframeRef,
-      candleSeriesRef,
-      loadMoreRef,
-      (bars) => {
-        if (!historyLoadCancelled) setHistoricalExtra((prev) => [...bars, ...prev]);
-      },
-    );
+    const handleRangeChange = makeHistoryLoader(selectedSymbol, timeframeRef, candleSeriesRef, loadMoreRef, (bars) => {
+      if (!historyLoadCancelled) setHistoricalExtra((prev) => [...bars, ...prev]);
+    });
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
 
     // Signal listener-binding hooks that a live chart instance now exists.
@@ -1658,18 +1444,7 @@ export function ChartPanel({
       };
       lastGapRefetchAtRef.current = 0;
     };
-  }, [
-    isDark,
-    pipDigits,
-    colors.background,
-    colors.text,
-    colors.grid,
-    colors.crosshair,
-    colors.watermark,
-    colors.up,
-    colors.down,
-    selectedSymbol,
-  ]); // Re-create on theme / precision / symbol change — NOT timeframe (the
+  }, [isDark, pipDigits, colors.background, colors.text, colors.grid, colors.crosshair, colors.watermark, colors.up, colors.down, selectedSymbol]); // Re-create on theme / precision / symbol change — NOT timeframe (the
   // chart persists across TF switches so drawings never blink out; the
   // TF-change effect below updates the live state in place, TradingView-style).
 
@@ -1702,25 +1477,17 @@ export function ChartPanel({
       wickVisible: chartPrefs.showWicks,
       borderVisible: chartPrefs.showCandleBorders,
     });
-  }, [
-    chartPrefs.candleUpColor,
-    chartPrefs.candleDownColor,
-    chartPrefs.showWicks,
-    chartPrefs.showCandleBorders,
-    colors.up,
-    colors.down,
-    chartEpoch,
-  ]);
+  }, [chartPrefs.candleUpColor, chartPrefs.candleDownColor, chartPrefs.showWicks, chartPrefs.showCandleBorders, colors.up, colors.down, chartEpoch]);
 
   useEffect(() => {
-    volumeSeriesRef.current?.applyOptions({ visible: chartPrefs.showVolume });
+    volumeSeriesRef.current?.applyOptions({visible: chartPrefs.showVolume});
   }, [chartPrefs.showVolume, chartEpoch]);
 
   useEffect(() => {
     chartRef.current?.applyOptions({
       grid: {
-        vertLines: { visible: chartPrefs.showGrid },
-        horzLines: { visible: chartPrefs.showGrid },
+        vertLines: {visible: chartPrefs.showGrid},
+        horzLines: {visible: chartPrefs.showGrid},
       },
     });
   }, [chartPrefs.showGrid, chartEpoch]);
@@ -1735,12 +1502,32 @@ export function ChartPanel({
         secondsVisible: timeframe === "1m",
         rightOffset: timeframe === "1m" ? 10 : 6,
         minBarSpacing: 0.5,
+        tickMarkFormatter: (time) => {
+          const d = new Date((time as number) * 1000);
+          return d.toLocaleTimeString("it-IT", {
+            timeZone: "UTC",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        },
+      },
+
+      localization: {
+        timeFormatter: (time) => {
+          // `time` here is the *shifted* UTC timestamp, so just format as UTC.
+          const d = new Date((time as number) * 1000);
+          return d.toLocaleString("it-IT", {
+            timeZone: "UTC", // <- important: shifted time is already Rome
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        },
       },
     });
-    drawingManagerRef.current?.updateTimeframe(
-      timeframe,
-      (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000,
-    );
+    drawingManagerRef.current?.updateTimeframe(timeframe, (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000);
   }, [timeframe]);
 
   // ── Refs for smooth real-time streaming ────────────────
@@ -1850,10 +1637,7 @@ export function ChartPanel({
     const nowSec = Math.floor(tick.timestamp / 1000);
     const crossed = detectCrossings(drawingsRef.current, prev, mid, nowSec, alertFiredRef.current);
     for (const d of crossed) {
-      toast.info(
-        "Price alert",
-        d.alertMessage ?? `${selectedSymbol} crossed your ${d.type} @ ${mid.toFixed(pipDigits)}`,
-      );
+      toast.info("Price alert", d.alertMessage ?? `${selectedSymbol} crossed your ${d.type} @ ${mid.toFixed(pipDigits)}`);
       playAlertBeep();
     }
   }, [tick, selectedSymbol, pipDigits]);
@@ -1886,12 +1670,7 @@ export function ChartPanel({
     const series = candleSeriesRef.current;
     detachPlugins(series, chartPluginsRef.current);
     chartPluginsRef.current = [];
-    attachPlugins(
-      series,
-      activePlugins,
-      { isDark, timeframe, symbolCategory },
-      chartPluginsRef.current,
-    );
+    attachPlugins(series, activePlugins, {isDark, timeframe, symbolCategory}, chartPluginsRef.current);
   }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory]);
 
   // ── Live bid/ask price tracking lines ──────────────────────
@@ -1900,11 +1679,7 @@ export function ChartPanel({
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
-    applyBidAskLines(
-      tick,
-      { showBidLine: chartPrefs.showBidLine, showAskLine: chartPrefs.showAskLine },
-      makeRtCtx(series),
-    );
+    applyBidAskLines(tick, {showBidLine: chartPrefs.showBidLine, showAskLine: chartPrefs.showAskLine}, makeRtCtx(series));
   }, [tick, chartPrefs.showBidLine, chartPrefs.showAskLine, makeRtCtx]);
 
   // ── Position/order overlays ────────────────────────────────
@@ -1928,15 +1703,7 @@ export function ChartPanel({
     for (const ord of orders) {
       addOrderOverlay(series, ord, selectedSymbol, colors.orderLine, priceLineRef.current);
     }
-  }, [
-    positions,
-    orders,
-    selectedSymbol,
-    chartData,
-    symbolInfo,
-    colors,
-    chartPrefs.overlayPositionsOnChart,
-  ]);
+  }, [positions, orders, selectedSymbol, chartData, symbolInfo, colors, chartPrefs.overlayPositionsOnChart]);
 
   return (
     <div className="relative w-full h-full">
@@ -1954,22 +1721,15 @@ export function ChartPanel({
 
       {/* Drag-to-edit tooltip */}
       {dragPrice && (
-        <div
-          className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none"
-          style={{ top: dragPrice.y - 32 }}
-        >
+        <div className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none" style={{top: dragPrice.y - 32}}>
           <div
             className={cn(
               "px-2 py-1 rounded text-[11px] font-mono font-bold shadow-lg border",
-              dragPrice.field === "TP"
-                ? "bg-[#0ecb81]/20 text-[#0ecb81] border-[#0ecb81]/40"
-                : "bg-[#f6465d]/20 text-[#f6465d] border-[#f6465d]/40",
+              dragPrice.field === "TP" ? "bg-[#0ecb81]/20 text-[#0ecb81] border-[#0ecb81]/40" : "bg-[#f6465d]/20 text-[#f6465d] border-[#f6465d]/40",
             )}
           >
             {dragPrice.field} → {dragPrice.price.toFixed(pipDigits)}
-            <span
-              className={dragPrice.pnlUsd >= 0 ? "ml-1.5 text-[#0ecb81]" : "ml-1.5 text-[#f6465d]"}
-            >
+            <span className={dragPrice.pnlUsd >= 0 ? "ml-1.5 text-[#0ecb81]" : "ml-1.5 text-[#f6465d]"}>
               {dragPrice.pnlUsd >= 0 ? "+" : ""}${dragPrice.pnlUsd.toFixed(2)}
             </span>
           </div>
@@ -1997,12 +1757,8 @@ export function ChartPanel({
           onSettings={() => setShowDrawingSettings(true)}
           onDuplicate={handleCloneDrawing}
           onReorder={(dir) => handleReorderDrawing(selectedDrawing, dir)}
-          onToggleLock={() =>
-            onUpdateDrawing?.({ ...selectedDrawing, locked: !selectedDrawing.locked })
-          }
-          onToggleAlert={() =>
-            onUpdateDrawing?.({ ...selectedDrawing, alertEnabled: !selectedDrawing.alertEnabled })
-          }
+          onToggleLock={() => onUpdateDrawing?.({...selectedDrawing, locked: !selectedDrawing.locked})}
+          onToggleAlert={() => onUpdateDrawing?.({...selectedDrawing, alertEnabled: !selectedDrawing.alertEnabled})}
           onRemove={() => onRemoveDrawing?.(selectedDrawing.id)}
         />
       )}
@@ -2079,7 +1835,7 @@ export function ChartPanel({
 
 // ── Local helper: Build chart data (candles + volume) ────────
 
-type CandleRow = CandlestickData<Time> & { volume: number };
+type CandleRow = CandlestickData<Time> & {volume: number};
 
 // Treat values below 1e12 as seconds, at/above as milliseconds.
 function secOrMsToMs(v: number): number {
@@ -2117,7 +1873,7 @@ function dedupeByTime(sorted: CandleRow[]): CandleRow[] {
   return out;
 }
 
-function useChartData(candles: Candle[], colors: { volumeUp: string; volumeDown: string }) {
+function useChartData(candles: Candle[], colors: {volumeUp: string; volumeDown: string}) {
   return useMemo(() => {
     const sorted = candles
       .map(toCandleRow)
@@ -2125,13 +1881,13 @@ function useChartData(candles: Candle[], colors: { volumeUp: string; volumeDown:
       .sort((a, b) => (a.time as number) - (b.time as number));
     const deduped = dedupeByTime(sorted);
 
-    const chartData: CandlestickData<Time>[] = deduped.map(({ volume: _v, ...rest }) => rest);
+    const chartData: CandlestickData<Time>[] = deduped.map(({volume: _v, ...rest}) => rest);
     const volumeData: HistogramData<Time>[] = deduped.map((c) => ({
       time: c.time,
       value: c.volume,
       color: c.close >= c.open ? colors.volumeUp : colors.volumeDown,
     }));
 
-    return { chartData, volumeData };
+    return {chartData, volumeData};
   }, [candles, colors.volumeUp, colors.volumeDown]);
 }
