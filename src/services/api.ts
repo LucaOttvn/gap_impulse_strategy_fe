@@ -60,8 +60,14 @@ export interface MassiveResponse {
 export const toIsoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 const liveApi = {
-  ...demoApi,                    // ← login, symbols, positions, orders all still work
-  getCandlesWithMeta: getCandlesWithMeta('AAPL', '1m'),
+  ...demoApi,
+
+  getCandles: (symbol: string, timeframe: string) =>
+    getCandlesWithMeta(symbol, timeframe),
+
+  getCandlesWithMeta: (symbol: string, timeframe: string) =>
+    getCandlesWithMeta(symbol, timeframe),
+
   getSymbols: () => Promise.resolve(SYMBOLS),
 };
 
