@@ -1,15 +1,8 @@
-/**
- * Demo API facade.
- *
- * OpenCharts runs without a backend: all real data the terminal needs is served
- * by the in-browser demo layer (services/demo). `api` is the demo implementation
- * wrapped in a Proxy whose fallback returns a benign async no-op for any method
- * not implemented in demo mode — so leftover calls from non-terminal code resolve
- * harmlessly instead of throwing network errors.
- */
+export const API_BASE = "http://localhost:3000";
 import { demoApi } from "./demo/api.ts";
+import { getCandlesWithMeta } from "./utils/candles.ts";
+import { SYMBOLS } from "./utils/symbols.ts";
 
-export const API_BASE = "";
 
 export class ApiError extends Error {
   status: number;
@@ -20,12 +13,61 @@ export class ApiError extends Error {
   }
 }
 
-// react-query rejects `undefined` query results, so resolve to null instead.
 const benign = () => Promise.resolve(null);
 
-export const api = new Proxy(demoApi as Record<string, unknown>, {
+// ── translate OpenCharts timeframe → (multiplier, timespan) ────
+// Verify these keys against what the UI actually passes in. Grep the
+// codebase for `getCandles(` to see the timeframe strings it uses.
+export const TIMEFRAME_MAP: Record<string, [string, string]> = {
+  "1m": ["1", "minute"],
+  "5m": ["5", "minute"],
+  "15m": ["15", "minute"],
+  "30m": ["30", "minute"],
+  "1h": ["1", "hour"],
+  "4h": ["4", "hour"],
+  "1d": ["1", "day"],
+  "1w": ["1", "week"],
+};
+
+// How far back to request per timeframe. Massive requires from/to.
+export const LOOKBACK_MS: Record<string, number> = {
+  "1m": 2 * 24 * 60 * 60 * 1000,
+  "5m": 7 * 24 * 60 * 60 * 1000,
+  "15m": 30 * 24 * 60 * 60 * 1000,
+  "30m": 60 * 24 * 60 * 60 * 1000,
+  "1h": 180 * 24 * 60 * 60 * 1000,
+  "4h": 365 * 24 * 60 * 60 * 1000,
+  "1d": 5 * 365 * 24 * 60 * 60 * 1000,
+  "1w": 10 * 365 * 24 * 60 * 60 * 1000,
+};
+
+// Massive aggregate result
+interface MassiveAgg {
+  t: number; // ms since epoch UTC
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface MassiveResponse {
+  results?: MassiveAgg[];
+  status?: string;
+  error?: string;
+}
+
+export const toIsoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+const liveApi = {
+  ...demoApi,                    // ← login, symbols, positions, orders all still work
+  getCandlesWithMeta: getCandlesWithMeta('AAPL', '1m'),
+  getSymbols: () => Promise.resolve(SYMBOLS),
+};
+
+export const api = new Proxy(liveApi as Record<string, unknown>, {
   get(target, prop: string) {
     if (prop in target) return target[prop];
     return benign;
   },
-}) as typeof demoApi & Record<string, (...args: never[]) => Promise<unknown>>;
+}) as typeof liveApi & Record<string, (...args: never[]) => Promise<unknown>>;

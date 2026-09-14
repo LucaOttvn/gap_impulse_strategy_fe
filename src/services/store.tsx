@@ -1,7 +1,8 @@
-import { create } from "zustand";
-import { api } from "./api.ts";
-import { wsClient } from "./ws.ts";
-import type { Account, Order, Position, Symbol, User } from "./schemas.ts";
+import {create} from "zustand";
+import {api} from "./api.ts";
+import {wsClient} from "./ws.ts";
+import type {Account, Order, Position, Symbol, User} from "./schemas.ts";
+import {SYMBOLS} from "./utils/symbols.ts";
 
 type LoginMfaResponse = {
   mfaRequired: true;
@@ -15,7 +16,7 @@ interface AuthState {
   refreshToken: string | null;
   user: User | null;
   isDemo: boolean;
-  mfaPending: { mfaToken: string; userId: string } | null;
+  mfaPending: {mfaToken: string; userId: string} | null;
   login: (email: string, password: string) => Promise<void>;
   googleLogin: (credential: string, firmSlug: string) => Promise<void>;
   demoLogin: () => Promise<void>;
@@ -63,8 +64,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const BASE = import.meta.env.VITE_API_URL || "";
     const res = await fetch(`${BASE}/api/auth/google`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ credential, firmSlug }),
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({credential, firmSlug}),
     });
     const json = await res.json().catch(() => null);
     if (!res.ok) throw new Error(json?.error?.message || "Google login failed");
@@ -120,7 +121,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   cancelMfa: () => {
-    set({ mfaPending: null });
+    set({mfaPending: null});
   },
 
   logout: () => {
@@ -132,7 +133,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem("user");
     localStorage.removeItem("is_demo");
     localStorage.removeItem("active_account");
-    set({ accessToken: null, refreshToken: null, user: null, isDemo: false });
+    localStorage.removeItem("selected_symbol");
+    set({accessToken: null, refreshToken: null, user: null, isDemo: false});
     wsClient.disconnect();
   },
 
@@ -148,7 +150,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const result = await api.refreshToken(rt);
         localStorage.setItem("access_token", result.accessToken);
         localStorage.setItem("refresh_token", result.refreshToken);
-        set({ accessToken: result.accessToken, refreshToken: result.refreshToken });
+        set({accessToken: result.accessToken, refreshToken: result.refreshToken});
         wsClient.connect(result.accessToken);
         startTokenRefresh();
       } catch {
@@ -317,10 +319,7 @@ interface TradingState {
   setOrders: (orders: Order[]) => void;
   setReplaySessionDate: (date: string | null) => void;
   /** Bump replay version and update replay state — call on ReplayStateChanged WS events */
-  onReplayStateChanged: (
-    action: string,
-    opts?: { speed?: number; cursorTimestamp?: number },
-  ) => void;
+  onReplayStateChanged: (action: string, opts?: {speed?: number; cursorTimestamp?: number}) => void;
 }
 
 export const useTradingStore = create<TradingState>((set, get) => ({
@@ -329,7 +328,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   positions: [],
   orders: [],
   symbols: [],
-  selectedSymbol: "BTCUSD",
+  selectedSymbol: localStorage.getItem("selected_symbol") ?? "AAPL",
   ticks: {},
   liveTicks: {},
   liveCandleUpdates: {},
@@ -342,12 +341,12 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   setActiveAccount: (id) => {
     localStorage.setItem("active_account", id);
-    set({ activeAccountId: id });
+    set({activeAccountId: id});
   },
 
   loadAccounts: async () => {
     const accounts = await api.getMyAccounts();
-    set({ accounts });
+    set({accounts});
     const currentId = get().activeAccountId;
     // Auto-select first account if none selected OR if current selection isn't in the list
     const currentValid = currentId && accounts.some((account) => account.id === currentId);
@@ -361,9 +360,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   updateAccountInStore: (updated) => {
     set((state) => ({
-      accounts: state.accounts.map((account) =>
-        account.id === updated.id ? { ...account, ...updated } : account,
-      ),
+      accounts: state.accounts.map((account) => (account.id === updated.id ? {...account, ...updated} : account)),
     }));
   },
 
@@ -371,36 +368,29 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     const id = get().activeAccountId;
     if (!id) return;
     const positions = await api.getPositions(id);
-    set({ positions });
+    set({positions});
   },
 
   loadOrders: async () => {
     const id = get().activeAccountId;
     if (!id) return;
     const orders = await api.getOrders(id);
-    set({ orders });
+    set({orders});
   },
 
   loadSymbols: async () => {
     const symbols = await api.getSymbols();
-    set({ symbols });
+    set({symbols});
   },
 
   updateTick: (symbolName, bid, ask, timestamp) => {
     // 1. Check pending buffer (same-frame dedup with timestamp awareness)
     const pending = _pendingTicks.get(symbolName);
-    if (pending && pending.bid === bid && pending.ask === ask && pending.timestamp >= timestamp)
-      return;
+    if (pending && pending.bid === bid && pending.ask === ask && pending.timestamp >= timestamp) return;
     // 2. When buffer is empty, also check committed state (cross-RAF dedup — prevents redundant flush)
     if (!pending) {
       const committed = get().ticks[symbolName];
-      if (
-        committed &&
-        committed.bid === bid &&
-        committed.ask === ask &&
-        committed.timestamp >= timestamp
-      )
-        return;
+      if (committed && committed.bid === bid && committed.ask === ask && committed.timestamp >= timestamp) return;
     }
     // 3. Resolve symbol-correct decimal precision (cached after first hit)
     if (!_symbolDecimals.has(symbolName)) {
@@ -422,24 +412,17 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         // subscriber during set() goes into a fresh buffer and gets its own RAF.
         _pendingTicks.clear();
         _tickRafId = null;
-        set((s) => ({ ticks: { ...s.ticks, ...updates } }));
+        set((s) => ({ticks: {...s.ticks, ...updates}}));
       });
     }
   },
 
   updateLiveTick: (symbolName, bid, ask, timestamp) => {
     const pending = _pendingLiveTicks.get(symbolName);
-    if (pending && pending.bid === bid && pending.ask === ask && pending.timestamp >= timestamp)
-      return;
+    if (pending && pending.bid === bid && pending.ask === ask && pending.timestamp >= timestamp) return;
     if (!pending) {
       const committed = get().liveTicks[symbolName];
-      if (
-        committed &&
-        committed.bid === bid &&
-        committed.ask === ask &&
-        committed.timestamp >= timestamp
-      )
-        return;
+      if (committed && committed.bid === bid && committed.ask === ask && committed.timestamp >= timestamp) return;
     }
     if (!_symbolDecimals.has(symbolName)) {
       const sym = get().symbols.find((s) => s.name === symbolName);
@@ -458,7 +441,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         const updates = Object.fromEntries(_pendingLiveTicks);
         _pendingLiveTicks.clear();
         _liveTickRafId = null;
-        set((s) => ({ liveTicks: { ...s.liveTicks, ...updates } }));
+        set((s) => ({liveTicks: {...s.liveTicks, ...updates}}));
       });
     }
   },
@@ -466,19 +449,17 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   updateCandleFromWs: (symbol, timeframe, bar) => {
     const key = `${symbol}:${timeframe}`;
     set((state) => ({
-      liveCandleUpdates: { ...state.liveCandleUpdates, [key]: bar },
+      liveCandleUpdates: {...state.liveCandleUpdates, [key]: bar},
     }));
   },
 
-  setSelectedSymbol: (symbol) =>
-    set((state) =>
-      state.selectedSymbol === symbol
-        ? { selectedSymbol: symbol }
-        : { selectedSymbol: symbol, liveCandleUpdates: {} },
-    ),
-  setPositions: (positions) => set({ positions }),
-  setOrders: (orders) => set({ orders }),
-  setReplaySessionDate: (date) => set({ replaySessionDate: date }),
+  setSelectedSymbol: (symbol) => {
+    localStorage.setItem("selected_symbol", symbol);
+    set((state) => (state.selectedSymbol === symbol ? {selectedSymbol: symbol} : {selectedSymbol: symbol, liveCandleUpdates: {}}));
+  },
+  setPositions: (positions) => set({positions}),
+  setOrders: (orders) => set({orders}),
+  setReplaySessionDate: (date) => set({replaySessionDate: date}),
 
   onReplayStateChanged: (action, opts) => {
     set((state) => nextReplayState(state, action, opts));
@@ -497,12 +478,9 @@ function replayPausedAfter(action: string, prevPaused: boolean): boolean {
 }
 
 function nextReplayState(
-  state: Pick<
-    TradingState,
-    "replayVersion" | "replayPaused" | "replaySpeed" | "replayCursorTimestamp" | "replaySessionDate"
-  >,
+  state: Pick<TradingState, "replayVersion" | "replayPaused" | "replaySpeed" | "replayCursorTimestamp" | "replaySessionDate">,
   action: string,
-  opts?: { speed?: number; cursorTimestamp?: number },
+  opts?: {speed?: number; cursorTimestamp?: number},
 ): Partial<TradingState> {
   const isStopped = action === "stopped";
   return {
@@ -510,9 +488,7 @@ function nextReplayState(
     isReplaying: !isStopped,
     replayPaused: replayPausedAfter(action, state.replayPaused),
     replaySpeed: isStopped ? 1 : (opts?.speed ?? state.replaySpeed),
-    replayCursorTimestamp: isStopped
-      ? null
-      : (opts?.cursorTimestamp ?? state.replayCursorTimestamp),
+    replayCursorTimestamp: isStopped ? null : (opts?.cursorTimestamp ?? state.replayCursorTimestamp),
     replaySessionDate: isStopped ? null : state.replaySessionDate,
     liveCandleUpdates: {},
   };
