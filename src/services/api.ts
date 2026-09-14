@@ -1,4 +1,4 @@
-export const API_BASE = "https://gap-impulse-strategy-be.onrender";
+export const API_BASE = "https://gap-impulse-strategy-be.onrender.com";
 import { demoApi } from "./demo/api.ts";
 import { getCandlesWithMeta } from "./utils/candles.ts";
 import { SYMBOLS } from "./utils/symbols.ts";

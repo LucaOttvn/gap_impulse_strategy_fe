@@ -38,7 +38,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "https://gap-impulse-strategy-be.onrender",
+        target: "https://gap-impulse-strategy-be.onrender.com",
         changeOrigin: true,
       },
       "/ws": {
