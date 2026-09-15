@@ -1,8 +1,7 @@
-import {create} from "zustand";
-import {api} from "./api.ts";
-import {wsClient} from "./ws.ts";
-import type {Account, Order, Position, Symbol, User} from "./schemas.ts";
-import {SYMBOLS} from "./utils/symbols.ts";
+import { create } from "zustand";
+import { api } from "./api.ts";
+import { wsClient } from "./ws.ts";
+import type { Account, Order, Position, Symbol, User } from "./schemas.ts";
 
 type LoginMfaResponse = {
   mfaRequired: true;

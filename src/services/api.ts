@@ -1,8 +1,8 @@
 export const API_BASE = "https://gap-impulse-strategy-be.onrender.com";
 // export const API_BASE = "http://localhost:3000";
 import { demoApi } from "./demo/api.ts";
-import { getCandlesWithMeta } from "./utils/candles.ts";
-import { SYMBOLS } from "./utils/symbols.ts";
+import { getCandlesWithMeta } from "./api/candles.ts";
+import { SYMBOLS } from "./api/symbols.ts";
 
 
 export class ApiError extends Error {

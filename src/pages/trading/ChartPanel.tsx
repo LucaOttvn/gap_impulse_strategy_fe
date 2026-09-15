@@ -44,6 +44,7 @@ import {useIndicators} from "./useIndicators.ts";
 import {useNewsOverlay} from "./useNewsOverlay.ts";
 import {useSlTpDrag} from "./useSlTpDrag.ts";
 import {formatCountdown, getCandleBucketTime, getMinMove, toUnixMs, toUnixSeconds} from "./utils.ts";
+import {drawGapsImpulseStrategy} from "@/services/utils/customDrawingTools.ts";
 
 // ── Staleness recovery ─────────────────────────────────────────────────────
 // Shared by the live-candle and tick-smoothing effects so either path can
@@ -1492,6 +1493,28 @@ export function ChartPanel({
     });
   }, [chartPrefs.showGrid, chartEpoch]);
 
+
+  //////////////////////// STRATEGY DRAWING SECTION ////////////////////////
+  const strategyPrimitivesRef = useRef<ISeriesPrimitive<Time>[]>([]);
+
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series || allCandles.length === 0) return;
+
+    // Detach anything from the previous run FIRST — always runs, no matter
+    // which path the previous effect took.
+    for (const p of strategyPrimitivesRef.current) {
+      try {
+        series.detachPrimitive(p);
+      } catch {
+        /* stale */
+      }
+    }
+    strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, allCandles);
+  }, [allCandles, chartEpoch]);
+
+  ///////////////////////////////////////////////////////////////////////////
+
   // Timeframe change — the chart instance is NOT recreated (so drawings stay
   // attached); instead we update the persistent chart's options and re-point
   // the drawing manager's interval/createdTf at the new TF in place.
@@ -1577,6 +1600,7 @@ export function ChartPanel({
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || chartData.length === 0) return;
+
     const ctx = makeRtCtx(series);
     const loadKey = `${selectedSymbol}:${timeframe}`;
     const isNewChart = lastLoadKeyRef.current !== loadKey;
