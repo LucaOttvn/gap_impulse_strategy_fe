@@ -13,6 +13,11 @@ import {
   type LogicalRange,
   type SeriesMarker,
   type Time,
+  CandlestickSeriesOptions,
+  CandlestickStyleOptions,
+  DeepPartial,
+  SeriesOptionsCommon,
+  WhitespaceData,
 } from "lightweight-charts";
 import {Clock, ListTree} from "lucide-react";
 import {type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState} from "react";
@@ -44,7 +49,7 @@ import {useIndicators} from "./useIndicators.ts";
 import {useNewsOverlay} from "./useNewsOverlay.ts";
 import {useSlTpDrag} from "./useSlTpDrag.ts";
 import {formatCountdown, getCandleBucketTime, getMinMove, toUnixMs, toUnixSeconds} from "./utils.ts";
-import {drawGapsImpulseStrategy} from "@/services/utils/customDrawingTools.ts";
+import {drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
 
 // ── Staleness recovery ─────────────────────────────────────────────────────
 // Shared by the live-candle and tick-smoothing effects so either path can
@@ -1493,27 +1498,42 @@ export function ChartPanel({
     });
   }, [chartPrefs.showGrid, chartEpoch]);
 
-
-  //////////////////////// STRATEGY DRAWING SECTION ////////////////////////
+  //////////////////////// STRATEGY DRAWING SECTION //////////////////////////////////////////////////////////////
   const strategyPrimitivesRef = useRef<ISeriesPrimitive<Time>[]>([]);
+  const dayOpenBandRef = useRef<ISeriesPrimitive<Time>[]>([]);
 
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || allCandles.length === 0) return;
 
-    // Detach anything from the previous run FIRST — always runs, no matter
-    // which path the previous effect took.
-    for (const p of strategyPrimitivesRef.current) {
-      try {
-        series.detachPrimitive(p);
-      } catch {
-        /* stale */
-      }
-    }
+    detachAll([strategyPrimitivesRef.current, dayOpenBandRef.current], series);
+
     strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, allCandles);
+    dayOpenBandRef.current = highlightFirstMinutesOfDay(series, allCandles, {
+      minutes: 15,
+      timeZone: "America/New_York",
+      fill: "rgba(255, 200, 50, 0.10)",
+    });
   }, [allCandles, chartEpoch]);
 
-  ///////////////////////////////////////////////////////////////////////////
+  function detachAll(
+    primitiveArrays: ISeriesPrimitive<Time>[][],
+    series: ISeriesApi<"Candlestick", Time, CandlestickData<Time> | WhitespaceData<Time>, CandlestickSeriesOptions, DeepPartial<CandlestickStyleOptions & SeriesOptionsCommon>> | null,
+  ): void {
+    if (!series) return;
+    for (const arr of primitiveArrays) {
+      for (const p of arr) {
+        try {
+          series.detachPrimitive(p);
+        } catch {
+          /* primitive belonged to a stale series — safe to ignore */
+        }
+      }
+      arr.length = 0;
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   // Timeframe change — the chart instance is NOT recreated (so drawings stay
   // attached); instead we update the persistent chart's options and re-point

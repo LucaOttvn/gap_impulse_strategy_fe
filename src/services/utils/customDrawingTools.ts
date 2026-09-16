@@ -2,19 +2,13 @@ import {
     CandlestickData,
     CandlestickSeriesOptions,
     CandlestickStyleOptions,
-    DeepPartial,
-    IChartApi,
-    ISeriesApi,
-    ISeriesPrimitive,
-    ISeriesPrimitivePaneRenderer,
-    ISeriesPrimitivePaneView,
-    SeriesAttachedParameter,
-    SeriesOptionsCommon,
+    DeepPartial, ISeriesApi,
+    ISeriesPrimitive, SeriesOptionsCommon,
     Time,
-    WhitespaceData,
+    WhitespaceData
 } from "lightweight-charts";
-import type { CanvasRenderingTarget2D } from "fancy-canvas";
 import { Candle } from "../schemas";
+import { TimeRangeBandPrimitive, GapRectanglePrimitive } from "./primitives";
 
 // ── Gap model ──────────────────────────────────────────────
 interface Gap {
@@ -59,73 +53,6 @@ function findGaps(candles: Candle[]): Gap[] {
     return gaps;
 }
 
-// ── Rectangle primitive (lightweight-charts v5) ────────────
-class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
-    private _chart: IChartApi | null = null;
-    private _series: ISeriesApi<"Candlestick"> | null = null;
-
-    constructor(
-        private readonly _startTime: Time,
-        private readonly _endTime: Time,
-        private readonly _topPrice: number,
-        private readonly _bottomPrice: number,
-        private readonly _fill: string,
-        private readonly _border: string,
-    ) { }
-
-    attached(param: SeriesAttachedParameter<Time>) {
-        this._chart = param.chart;
-        this._series = param.series as ISeriesApi<"Candlestick">;
-    }
-
-    detached() {
-        this._chart = null;
-        this._series = null;
-    }
-
-    updateAllViews() { }
-
-    paneViews(): readonly ISeriesPrimitivePaneView[] {
-        const self = this;
-        return [
-            {
-                zOrder: () => "top" as const,
-                renderer: (): ISeriesPrimitivePaneRenderer => ({
-                    draw(target: CanvasRenderingTarget2D) {
-                        const chart = self._chart;
-                        const series = self._series;
-                        if (!chart || !series) return;
-
-                        const ts = chart.timeScale();
-                        const x1 = ts.timeToCoordinate(self._startTime);
-                        const x2 = ts.timeToCoordinate(self._endTime);
-                        const y1 = series.priceToCoordinate(self._topPrice);
-                        const y2 = series.priceToCoordinate(self._bottomPrice);
-
-                        // Skip if the rectangle is entirely off-screen on either axis.
-                        if (x1 === null || x2 === null || y1 === null || y2 === null) return;
-
-                        const left = Math.min(x1, x2);
-                        const right = Math.max(x1, x2);
-                        const top = Math.min(y1, y2);
-                        const bottom = Math.max(y1, y2);
-
-                        target.useMediaCoordinateSpace(({ context: ctx }) => {
-                            ctx.save();
-                            ctx.fillStyle = self._fill;
-                            ctx.fillRect(left, top, right - left, bottom - top);
-                            ctx.strokeStyle = self._border;
-                            ctx.lineWidth = 1;
-                            ctx.strokeRect(left, top, right - left, bottom - top);
-                            ctx.restore();
-                        });
-                    },
-                }),
-            },
-        ];
-    }
-}
-
 // ── Public entry point ─────────────────────────────────────
 // Attaches one rectangle primitive per detected gap.
 // Returns the primitives so the caller can detach them on cleanup.
@@ -156,6 +83,74 @@ export function drawGapsImpulseStrategy(
         );
         candleSeries.attachPrimitive(primitive);
         primitives.push(primitive);
+    }
+
+    return primitives;
+}
+
+
+// ── Day-start detection ────────────────────────────────────
+function dayKey(unixSeconds: number, timeZone: string): string {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(new Date(unixSeconds * 1000));
+}
+
+function findDayStarts(candles: Candle[], timeZone = "America/New_York"): number[] {
+    const indices: number[] = [];
+    let prev = "";
+    for (let i = 0; i < candles.length; i++) {
+        const key = dayKey(candles[i].time, timeZone);
+        if (key !== prev) {
+            indices.push(i);
+            prev = key;
+        }
+    }
+    return indices;
+}
+
+// ── Public entry point: highlight first N minutes of each day ──
+export function highlightFirstMinutesOfDay(
+    candleSeries: ISeriesApi<
+        "Candlestick",
+        Time,
+        CandlestickData<Time> | WhitespaceData<Time>,
+        CandlestickSeriesOptions,
+        DeepPartial<CandlestickStyleOptions & SeriesOptionsCommon>
+    >,
+    candles: Candle[],
+    options?: {
+        minutes?: number;
+        timeZone?: string;
+        fill?: string;
+        /** Skip days whose opening bar isn't the true session open (e.g. sparse data). */
+        requireFirstBar?: boolean;
+    },
+): ISeriesPrimitive<Time>[] {
+    const minutes = options?.minutes ?? 15;
+    const timeZone = options?.timeZone ?? "America/New_York";
+    const fill = options?.fill ?? "rgba(255, 200, 50, 0.10)";
+
+    const dayStartIndices = findDayStarts(candles, timeZone);
+    const primitives: ISeriesPrimitive<Time>[] = [];
+
+    for (const i of dayStartIndices) {
+        const first = candles[i];
+        if (!first) continue;
+
+        const startSec = first.time;
+        const endSec = startSec + minutes * 60;
+
+        const band = new TimeRangeBandPrimitive(
+            startSec as Time,
+            endSec as Time,
+            fill,
+        );
+        candleSeries.attachPrimitive(band);
+        primitives.push(band);
     }
 
     return primitives;
