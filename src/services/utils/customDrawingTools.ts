@@ -19,18 +19,70 @@ interface Gap {
     direction: "bullish" | "bearish";
 }
 
+// ── Day-start helpers ──────────────────────────────────────
+function dayKey(unixSeconds: number, timeZone: string): string {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(new Date(unixSeconds * 1000));
+}
+
+function findDayStarts(candles: Candle[], timeZone = "America/New_York"): number[] {
+    const indices: number[] = [];
+    let prev = "";
+    for (let i = 0; i < candles.length; i++) {
+        const key = dayKey(candles[i].time, timeZone);
+        if (key !== prev) {
+            indices.push(i);
+            prev = key;
+        }
+    }
+    return indices;
+}
+
+// For each candle index, the time of the first candle of its calendar day.
+function computeDayStartTimes(candles: Candle[], timeZone: string): number[] {
+    const dayStartTimes: number[] = new Array(candles.length);
+    let currentStart = candles[0]?.time ?? 0;
+    let prevKey = "";
+    for (let i = 0; i < candles.length; i++) {
+        const key = dayKey(candles[i].time, timeZone);
+        if (key !== prevKey) {
+            currentStart = candles[i].time;
+            prevKey = key;
+        }
+        dayStartTimes[i] = currentStart;
+    }
+    return dayStartTimes;
+}
+
 // ── Detection ──────────────────────────────────────────────
-// Scans non-overlapping groups of 3 candles [i, i+1, i+2].
+// Scans every group of 3 candles [i, i+1, i+2].
 // Compares candle i (first) with candle i+2 (third).
 //   bullish: high[first] < low[third]
 //   bearish: low[first]  > high[third]
-function findGaps(candles: Candle[]): Gap[] {
+//
+// A gap is rejected when its third candle is still inside the opening
+// window (first N minutes of the day in the target timezone). Because
+// candles are time-ordered, if the third is inside the window then so
+// are the first two — one check covers all three.
+const OPENING_WINDOW_SEC = 15 * 60;
+
+function findGaps(candles: Candle[], timeZone = "America/New_York"): Gap[] {
     const gaps: Gap[] = [];
+    if (candles.length < 3) return gaps;
+
+    const dayStartTimes = computeDayStartTimes(candles, timeZone);
+
     for (let i = 0; i + 2 < candles.length; i += 1) {
         const first = candles[i];
         const third = candles[i + 2];
+        if (!first || !third) continue;
 
-        if (!first || !third) continue
+        // Skip gaps whose third candle is still in the opening window.
+        if (third.time < dayStartTimes[i + 2]! + OPENING_WINDOW_SEC) continue;
 
         if (first.high < third.low) {
             gaps.push({
@@ -53,7 +105,7 @@ function findGaps(candles: Candle[]): Gap[] {
     return gaps;
 }
 
-// ── Public entry point ─────────────────────────────────────
+// ── Public entry point: gap rectangles ─────────────────────
 // Attaches one rectangle primitive per detected gap.
 // Returns the primitives so the caller can detach them on cleanup.
 export function drawGapsImpulseStrategy(
@@ -86,30 +138,6 @@ export function drawGapsImpulseStrategy(
     }
 
     return primitives;
-}
-
-
-// ── Day-start detection ────────────────────────────────────
-function dayKey(unixSeconds: number, timeZone: string): string {
-    return new Intl.DateTimeFormat("en-CA", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    }).format(new Date(unixSeconds * 1000));
-}
-
-function findDayStarts(candles: Candle[], timeZone = "America/New_York"): number[] {
-    const indices: number[] = [];
-    let prev = "";
-    for (let i = 0; i < candles.length; i++) {
-        const key = dayKey(candles[i].time, timeZone);
-        if (key !== prev) {
-            indices.push(i);
-            prev = key;
-        }
-    }
-    return indices;
 }
 
 // ── Public entry point: highlight first N minutes of each day ──
