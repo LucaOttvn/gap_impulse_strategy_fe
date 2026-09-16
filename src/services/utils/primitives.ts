@@ -116,3 +116,67 @@ export class TimeRangeBandPrimitive implements ISeriesPrimitive<Time> {
     ];
   }
 }
+
+export class HorizontalSegmentPrimitive implements ISeriesPrimitive<Time> {
+  private _chart: IChartApi | null = null;
+  private _series: ISeriesApi<"Candlestick"> | null = null;
+
+  constructor(
+    private readonly _startTime: Time,
+    private readonly _endTime: Time,
+    private readonly _price: number,
+    private readonly _color: string,
+    private readonly _lineWidth: number = 2,
+    private readonly _lineStyle: "solid" | "dashed" | "dotted" = "solid",
+  ) {}
+
+  attached(param: SeriesAttachedParameter<Time>) {
+    this._chart = param.chart;
+    this._series = param.series as ISeriesApi<"Candlestick">;
+  }
+
+  detached() {
+    this._chart = null;
+    this._series = null;
+  }
+
+  updateAllViews() {}
+
+  paneViews(): readonly ISeriesPrimitivePaneView[] {
+    const self = this;
+    return [
+      {
+        zOrder: () => "top" as const,
+        renderer: (): ISeriesPrimitivePaneRenderer => ({
+          draw(target: CanvasRenderingTarget2D) {
+            const chart = self._chart;
+            const series = self._series;
+            if (!chart || !series) return;
+
+            const ts = chart.timeScale();
+            const x1 = ts.timeToCoordinate(self._startTime);
+            const x2 = ts.timeToCoordinate(self._endTime);
+            const y = series.priceToCoordinate(self._price);
+            if (x1 === null || x2 === null || y === null) return;
+
+            const left = Math.min(x1, x2);
+            const right = Math.max(x1, x2);
+
+            target.useMediaCoordinateSpace(({ context: ctx }) => {
+              ctx.save();
+              ctx.strokeStyle = self._color;
+              ctx.lineWidth = self._lineWidth;
+              if (self._lineStyle === "dashed") ctx.setLineDash([6, 4]);
+              else if (self._lineStyle === "dotted") ctx.setLineDash([2, 3]);
+              ctx.beginPath();
+              ctx.moveTo(left, y);
+              ctx.lineTo(right, y);
+              ctx.stroke();
+              ctx.restore();
+            });
+          },
+        }),
+      },
+    ];
+  }
+}

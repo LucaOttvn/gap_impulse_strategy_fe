@@ -49,7 +49,7 @@ import {useIndicators} from "./useIndicators.ts";
 import {useNewsOverlay} from "./useNewsOverlay.ts";
 import {useSlTpDrag} from "./useSlTpDrag.ts";
 import {formatCountdown, getCandleBucketTime, getMinMove, toUnixMs, toUnixSeconds} from "./utils.ts";
-import {drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
+import {drawDayLevels, drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
 
 // ── Staleness recovery ─────────────────────────────────────────────────────
 // Shared by the live-candle and tick-smoothing effects so either path can
@@ -1284,12 +1284,7 @@ export function ChartPanel({
         borderVisible: true,
       },
       watermark: {
-        visible: true,
-        text: selectedSymbol,
-        fontSize: 56,
-        color: colors.watermark,
-        horzAlign: "center",
-        vertAlign: "center",
+        visible: false,
       },
       handleScroll: {
         mouseWheel: true,
@@ -1363,6 +1358,7 @@ export function ChartPanel({
         chart.applyOptions({
           width: entry.contentRect.width,
           height: entry.contentRect.height,
+          
         });
       }
     });
@@ -1454,20 +1450,6 @@ export function ChartPanel({
   // chart persists across TF switches so drawings never blink out; the
   // TF-change effect below updates the live state in place, TradingView-style).
 
-  // Update watermark text when symbol changes (visibility comes from settings)
-  useEffect(() => {
-    chartRef.current?.applyOptions({
-      watermark: {
-        visible: chartPrefs.showWatermark,
-        text: selectedSymbol,
-        fontSize: 56,
-        color: colors.watermark,
-        horzAlign: "center",
-        vertAlign: "center",
-      },
-    });
-  }, [selectedSymbol, colors.watermark, chartPrefs.showWatermark, chartEpoch]);
-
   // ── Live appearance settings (no chart recreation) ──
   useEffect(() => {
     // `colors` already carries the user's overrides (mergeChartColors).
@@ -1501,18 +1483,25 @@ export function ChartPanel({
   //////////////////////// STRATEGY DRAWING SECTION //////////////////////////////////////////////////////////////
   const strategyPrimitivesRef = useRef<ISeriesPrimitive<Time>[]>([]);
   const dayOpenBandRef = useRef<ISeriesPrimitive<Time>[]>([]);
+  const dayLevelsRef = useRef<ISeriesPrimitive<Time>[]>([]);
 
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || allCandles.length === 0) return;
 
-    detachAll([strategyPrimitivesRef.current, dayOpenBandRef.current], series);
+    detachAll([strategyPrimitivesRef.current, dayOpenBandRef.current, dayLevelsRef.current], series);
 
     strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, allCandles);
     dayOpenBandRef.current = highlightFirstMinutesOfDay(series, allCandles, {
       minutes: 15,
       timeZone: "America/New_York",
       fill: "rgba(255, 200, 50, 0.10)",
+    });
+    dayLevelsRef.current = drawDayLevels(series, allCandles, {
+      timeZone: "America/New_York",
+      highColor: "#ffffff",
+      lowColor: "#ffffff",
+      lineWidth: 2,
     });
   }, [allCandles, chartEpoch]);
 
