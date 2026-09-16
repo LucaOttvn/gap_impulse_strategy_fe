@@ -1,5 +1,9 @@
 import { CanvasRenderingTarget2D } from "fancy-canvas";
-import { ISeriesPrimitive, Time, IChartApi, ISeriesApi, SeriesAttachedParameter, ISeriesPrimitivePaneView, ISeriesPrimitivePaneRenderer } from "lightweight-charts";
+import {
+    ISeriesPrimitive, Time, IChartApi, ISeriesApi,
+    SeriesAttachedParameter,
+    IPrimitivePaneView, IPrimitivePaneRenderer,
+} from "lightweight-charts";
 
 // ── Rectangle primitive ────────────
 export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
@@ -27,12 +31,12 @@ export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
 
     updateAllViews() { }
 
-    paneViews(): readonly ISeriesPrimitivePaneView[] {
+    paneViews(): readonly IPrimitivePaneView[] {
         const self = this;
         return [
             {
                 zOrder: () => "top" as const,
-                renderer: (): ISeriesPrimitivePaneRenderer => ({
+                renderer: (): IPrimitivePaneRenderer => ({
                     draw(target: CanvasRenderingTarget2D) {
                         const chart = self._chart;
                         const series = self._series;
@@ -44,7 +48,6 @@ export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
                         const y1 = series.priceToCoordinate(self._topPrice);
                         const y2 = series.priceToCoordinate(self._bottomPrice);
 
-                        // Skip if the rectangle is entirely off-screen on either axis.
                         if (x1 === null || x2 === null || y1 === null || y2 === null) return;
 
                         const left = Math.min(x1, x2);
@@ -69,114 +72,114 @@ export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
 }
 
 export class TimeRangeBandPrimitive implements ISeriesPrimitive<Time> {
-  private _chart: IChartApi | null = null;
+    private _chart: IChartApi | null = null;
 
-  constructor(
-    private readonly _startTime: Time,
-    private readonly _endTime: Time,
-    private readonly _fill: string,
-  ) {}
+    constructor(
+        private readonly _startTime: Time,
+        private readonly _endTime: Time,
+        private readonly _fill: string,
+    ) {}
 
-  attached(param: SeriesAttachedParameter<Time>) {
-    this._chart = param.chart;
-  }
+    attached(param: SeriesAttachedParameter<Time>) {
+        this._chart = param.chart;
+    }
 
-  detached() {
-    this._chart = null;
-  }
+    detached() {
+        this._chart = null;
+    }
 
-  updateAllViews() {}
+    updateAllViews() {}
 
-  paneViews(): readonly ISeriesPrimitivePaneView[] {
-    const self = this;
-    return [
-      {
-        zOrder: () => "bottom" as const,   // behind candles — it's a background
-        renderer: (): ISeriesPrimitivePaneRenderer => ({
-          draw(target: CanvasRenderingTarget2D) {
-            const chart = self._chart;
-            if (!chart) return;
+    paneViews(): readonly IPrimitivePaneView[] {
+        const self = this;
+        return [
+            {
+                zOrder: () => "bottom" as const,
+                renderer: (): IPrimitivePaneRenderer => ({
+                    draw(target: CanvasRenderingTarget2D) {
+                        const chart = self._chart;
+                        if (!chart) return;
 
-            const ts = chart.timeScale();
-            const x1 = ts.timeToCoordinate(self._startTime);
-            const x2 = ts.timeToCoordinate(self._endTime);
-            if (x1 === null || x2 === null) return;
+                        const ts = chart.timeScale();
+                        const x1 = ts.timeToCoordinate(self._startTime);
+                        const x2 = ts.timeToCoordinate(self._endTime);
+                        if (x1 === null || x2 === null) return;
 
-            target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
-              const left = Math.min(x1, x2);
-              const right = Math.max(x1, x2);
-              ctx.save();
-              ctx.fillStyle = self._fill;
-              ctx.fillRect(left, 0, right - left, mediaSize.height);
-              ctx.restore();
-            });
-          },
-        }),
-      },
-    ];
-  }
+                        target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+                            const left = Math.min(x1, x2);
+                            const right = Math.max(x1, x2);
+                            ctx.save();
+                            ctx.fillStyle = self._fill;
+                            ctx.fillRect(left, 0, right - left, mediaSize.height);
+                            ctx.restore();
+                        });
+                    },
+                }),
+            },
+        ];
+    }
 }
 
 export class HorizontalSegmentPrimitive implements ISeriesPrimitive<Time> {
-  private _chart: IChartApi | null = null;
-  private _series: ISeriesApi<"Candlestick"> | null = null;
+    private _chart: IChartApi | null = null;
+    private _series: ISeriesApi<"Candlestick"> | null = null;
 
-  constructor(
-    private readonly _startTime: Time,
-    private readonly _endTime: Time,
-    private readonly _price: number,
-    private readonly _color: string,
-    private readonly _lineWidth: number = 2,
-    private readonly _lineStyle: "solid" | "dashed" | "dotted" = "solid",
-  ) {}
+    constructor(
+        private readonly _startTime: Time,
+        private readonly _endTime: Time,
+        private readonly _price: number,
+        private readonly _color: string,
+        private readonly _lineWidth: number = 2,
+        private readonly _lineStyle: "solid" | "dashed" | "dotted" = "solid",
+    ) {}
 
-  attached(param: SeriesAttachedParameter<Time>) {
-    this._chart = param.chart;
-    this._series = param.series as ISeriesApi<"Candlestick">;
-  }
+    attached(param: SeriesAttachedParameter<Time>) {
+        this._chart = param.chart;
+        this._series = param.series as ISeriesApi<"Candlestick">;
+    }
 
-  detached() {
-    this._chart = null;
-    this._series = null;
-  }
+    detached() {
+        this._chart = null;
+        this._series = null;
+    }
 
-  updateAllViews() {}
+    updateAllViews() {}
 
-  paneViews(): readonly ISeriesPrimitivePaneView[] {
-    const self = this;
-    return [
-      {
-        zOrder: () => "top" as const,
-        renderer: (): ISeriesPrimitivePaneRenderer => ({
-          draw(target: CanvasRenderingTarget2D) {
-            const chart = self._chart;
-            const series = self._series;
-            if (!chart || !series) return;
+    paneViews(): readonly IPrimitivePaneView[] {
+        const self = this;
+        return [
+            {
+                zOrder: () => "top" as const,
+                renderer: (): IPrimitivePaneRenderer => ({
+                    draw(target: CanvasRenderingTarget2D) {
+                        const chart = self._chart;
+                        const series = self._series;
+                        if (!chart || !series) return;
 
-            const ts = chart.timeScale();
-            const x1 = ts.timeToCoordinate(self._startTime);
-            const x2 = ts.timeToCoordinate(self._endTime);
-            const y = series.priceToCoordinate(self._price);
-            if (x1 === null || x2 === null || y === null) return;
+                        const ts = chart.timeScale();
+                        const x1 = ts.timeToCoordinate(self._startTime);
+                        const x2 = ts.timeToCoordinate(self._endTime);
+                        const y = series.priceToCoordinate(self._price);
+                        if (x1 === null || x2 === null || y === null) return;
 
-            const left = Math.min(x1, x2);
-            const right = Math.max(x1, x2);
+                        const left = Math.min(x1, x2);
+                        const right = Math.max(x1, x2);
 
-            target.useMediaCoordinateSpace(({ context: ctx }) => {
-              ctx.save();
-              ctx.strokeStyle = self._color;
-              ctx.lineWidth = self._lineWidth;
-              if (self._lineStyle === "dashed") ctx.setLineDash([6, 4]);
-              else if (self._lineStyle === "dotted") ctx.setLineDash([2, 3]);
-              ctx.beginPath();
-              ctx.moveTo(left, y);
-              ctx.lineTo(right, y);
-              ctx.stroke();
-              ctx.restore();
-            });
-          },
-        }),
-      },
-    ];
-  }
+                        target.useMediaCoordinateSpace(({ context: ctx }) => {
+                            ctx.save();
+                            ctx.strokeStyle = self._color;
+                            ctx.lineWidth = self._lineWidth;
+                            if (self._lineStyle === "dashed") ctx.setLineDash([6, 4]);
+                            else if (self._lineStyle === "dotted") ctx.setLineDash([2, 3]);
+                            ctx.beginPath();
+                            ctx.moveTo(left, y);
+                            ctx.lineTo(right, y);
+                            ctx.stroke();
+                            ctx.restore();
+                        });
+                    },
+                }),
+            },
+        ];
+    }
 }

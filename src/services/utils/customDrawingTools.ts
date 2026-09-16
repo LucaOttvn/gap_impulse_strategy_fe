@@ -33,7 +33,8 @@ function findDayStarts(candles: Candle[], timeZone = "America/New_York"): number
     const indices: number[] = [];
     let prev = "";
     for (let i = 0; i < candles.length; i++) {
-        const key = dayKey(candles[i].time, timeZone);
+        if (!candles[i]) continue
+        const key = dayKey(candles[i]!.time, timeZone);
         if (key !== prev) {
             indices.push(i);
             prev = key;
@@ -48,9 +49,10 @@ function computeDayStartTimes(candles: Candle[], timeZone: string): number[] {
     let currentStart = candles[0]?.time ?? 0;
     let prevKey = "";
     for (let i = 0; i < candles.length; i++) {
-        const key = dayKey(candles[i].time, timeZone);
+        if (!candles[i]) continue
+        const key = dayKey(candles[i]!.time, timeZone);
         if (key !== prevKey) {
-            currentStart = candles[i].time;
+            currentStart = candles[i]!.time;
             prevKey = key;
         }
         dayStartTimes[i] = currentStart;
