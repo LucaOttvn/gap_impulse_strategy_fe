@@ -1,159 +1,89 @@
+// RESPONSIBILITY
+// --------------
+// Owns the chart panel: creating/destroying the lightweight-charts instance,
+// wiring the ~15 effects that keep the chart in sync with live data, drawings,
+// positions, plugins and UI state, and rendering the overlay HUD. It contains
+// NO raw chart math or data transformation — every helper is split out
+// into focused modules (see "SPLIT MODULES" below) to ensure readability.
+//
+// WHAT THIS COMPONENT DOES
+// ------------------------
+//   1. Chart lifecycle – creates the chart + candle/volume series the first
+//      time (recreated only on theme / precision / symbol change; the chart
+//      deliberately PERSISTS across timeframe switches so drawings never blink).
+//   2. Live data       – paints server CandleUpdate / tick / bid-ask streams,
+//      restores the legend after crosshair leave, runs a staleness watchdog.
+//   3. History (infinite scroll) – subscribes a load-more handler that prepends
+//      older candles when the user scrolls to the left edge.
+//   4. Drawings        – creates the DrawingToolsManager, syncs tool/mode/equity
+//      refs, clone / reorder / selection handlers, context menus and object tree.
+//   5. Overlays        – positions/orders price-lines, SL/TP drag map, challenge
+//      rule levels, news popup, strategy-drawing layers, plugin primitives.
+//   6. UI state        – legend header, countdown, context menus, settings dialog,
+//      drawing tool rail.
+//
+// SPLIT MODULES
+// ------------------------------
+//   chartTypes.ts            – shared types for live data / legend / replay events
+//   chartHistoryLoader.ts    – scroll-triggered "infinite history" fetching
+//   chartPlugins.ts          – ISeriesPrimitive plugin factories + attach/detach
+//   chartRealtime.ts         – live series update / setData / bid-ask helpers
+//   chartPositionOverlays.ts – position / SL / TP / order price-line overlays
+//   chartReplayMarkers.ts    – replay trade-event marker builders
+//   chartHud.tsx             – presentational HUD overlays (legend, tools, object tree)
+//   chartData.ts             – candle → lightweight-charts rows + useChartData hook
+//
+// The remaining file is: props contract + effect wiring + JSX.
+// ═════════════════════════════════════════════════════════════════════════════
+
 import {useQueryClient} from "@tanstack/react-query";
 import {
+  CandlestickSeries,
   type CandlestickData,
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
+  HistogramSeries,
   type HistogramData,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
   type ISeriesPrimitive,
   LineStyle,
-  type LogicalRange,
   type SeriesMarker,
   type Time,
-  CandlestickSeriesOptions,
-  CandlestickStyleOptions,
-  DeepPartial,
-  SeriesOptionsCommon,
-  WhitespaceData,
-  CandlestickSeries,
-  HistogramSeries,
-  createSeriesMarkers,
 } from "lightweight-charts";
-import {Clock, ListTree} from "lucide-react";
-import {type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {useChartPreferences} from "../../hooks/useChartPreferences.ts";
-import {BandsIndicator} from "../../lib/chart-plugins/bands-indicator/bands-indicator.ts";
-import {DeltaTooltipPrimitive} from "../../lib/chart-plugins/delta-tooltip/delta-tooltip.ts";
 import {detectCrossings, playAlertBeep} from "../../lib/chart-plugins/drawing-tools/line-alerts.ts";
 import {DrawingToolsManager} from "../../lib/chart-plugins/drawing-tools/manager.ts";
-import {CrosshairHighlightPrimitive} from "../../lib/chart-plugins/highlight-bar-crosshair/highlight-bar-crosshair.ts";
-import {SessionBreaks} from "../../lib/chart-plugins/session-breaks/session-breaks.ts";
-import {SessionHighlighting} from "../../lib/chart-plugins/session-highlighting/session-highlighting.ts";
-import {TooltipPrimitive} from "../../lib/chart-plugins/tooltip/tooltip.ts";
 import type {IndicatorType} from "../../lib/indicators.ts";
 import {cn} from "../../lib/utils.ts";
-import {api} from "../../services/api.ts";
-import {queryKeys} from "../../services/queries.ts";
 import type {Candle, Order, Position, Symbol} from "../../services/schemas.ts";
 import {toast} from "../../services/toast.ts";
 import {CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe} from "./constants.ts";
 import {ChartContextMenu} from "./ChartContextMenu.tsx";
 import {ChartSettingsDialog} from "./ChartSettingsDialog.tsx";
-import {DrawingContextMenu, DrawingFloatingToolbar, DrawingSettingsDialog} from "./DrawingToolsOverlay.tsx";
+import {DrawingContextMenu} from "./DrawingToolsOverlay.tsx";
 import {DrawingToolRail} from "./DrawingToolRail.tsx";
 import {DRAWING_STYLES_EVENT, getStyleDefaults} from "./drawingStyles.ts";
 import {NewsOverlay} from "./NewsOverlay.tsx";
-import {ObjectTreePanel} from "./ObjectTreePanel.tsx";
+import {drawDayLevels, drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
+import {formatCountdown, getMinMove} from "./utils.ts";
+import {useChartData} from "./chartData.ts";
+import {makeHistoryLoader, type LoadMoreState} from "./chartHistoryLoader.ts";
+
+import {attachPlugins, detachPlugins, detachPrimitiveArrays} from "./chartPlugins.ts";
+import {addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap} from "./chartPositionOverlays.ts";
+import {buildReplayMarker} from "./chartReplayMarkers.ts";
+import {applyBidAskLines, applyServerCandle, applyTick, legendFromSeries, reapplyLive, replayBufferedLive, requestGapRefetch, restoreLegendOnLeave, scheduleStaleRefetch, scrollOrFit, type RtCtx} from "./chartRealtime.ts";
+import {candleToLegend, type OhlcvLegend} from "./chartTypes.ts";
 import {useChallengeLevels} from "./useChallengeLevels.ts";
 import {useIndicators} from "./useIndicators.ts";
 import {useNewsOverlay} from "./useNewsOverlay.ts";
 import {useSlTpDrag} from "./useSlTpDrag.ts";
-import {formatCountdown, getCandleBucketTime, getMinMove, toUnixMs, toUnixSeconds} from "./utils.ts";
-import {drawDayLevels, drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
-
-// ── Staleness recovery ─────────────────────────────────────────────────────
-// Shared by the live-candle and tick-smoothing effects so either path can
-// trigger a REST refetch when the chart falls more than 1.5 intervals behind
-// wall-clock. Throttled to ≤1 refetch per 3 s across both callers.
-function requestGapRefetch(refAtRef: {current: number}, qc: ReturnType<typeof useQueryClient>, symbol: string, timeframe: string): void {
-  const now = Date.now();
-  if (now - refAtRef.current <= 3_000) return;
-  refAtRef.current = now;
-  qc.invalidateQueries({queryKey: queryKeys.market.candles(symbol, timeframe)});
-}
-
-// ── Scroll-triggered history loading ─────────────────────────
-// When the user scrolls to the left edge of loaded data, fetch the preceding
-// window from the candle API and prepend it so the chart extends seamlessly.
-
-const LOAD_MORE_THRESHOLD = 20; // trigger when fewer than N bars remain on the left
-const LOAD_MORE_WINDOW = 500; // how many interval-widths to fetch per extension
-
-type LoadMoreState = {
-  loading: boolean;
-  noMoreData: boolean;
-  lastFetchedBeforeMs: number;
-  // When > 0, use this as toMs for the next fetch instead of getSeriesOldestMs.
-  // Set after an empty-range response so we skip over gaps (e.g. Forex weekends)
-  // rather than permanently locking noMoreData on the first empty window.
-  fetchFromMs: number;
-};
-
-function getSeriesOldestMs(series: ISeriesApi<"Candlestick">): number {
-  const data = series.data();
-  return data.length === 0 ? 0 : (data[0]!.time as number) * 1_000;
-}
-
-function isLoadMoreEligible(state: LoadMoreState, series: ISeriesApi<"Candlestick">, range: LogicalRange): boolean {
-  if (state.loading || state.noMoreData) return false;
-  const barsInfo = series.barsInLogicalRange(range);
-  if ((barsInfo?.barsBefore ?? Number.POSITIVE_INFINITY) > LOAD_MORE_THRESHOLD) return false;
-  // A shifted window from a previous empty-range response is always eligible —
-  // we need to try the window before the gap (e.g. before a Forex weekend).
-  if (state.fetchFromMs > 0) return true;
-  const oldestMs = getSeriesOldestMs(series);
-  if (oldestMs === 0) return false;
-  return state.lastFetchedBeforeMs === 0 || oldestMs < state.lastFetchedBeforeMs;
-}
-
-function fetchOlderRange(symbol: string, timeframe: string, toMs: number, state: LoadMoreState, onLoaded: (bars: Candle[]) => void): void {
-  const windowMs = LOAD_MORE_WINDOW * (TF_INTERVAL_MS[timeframe as Timeframe] ?? 60_000);
-  api
-    .getCandles(symbol, timeframe)
-    .then((bars) => {
-      if (bars.candles.length === 0) {
-        // Empty window — could be a gap (e.g. Forex weekend) rather than true
-        // end of history. Shift the fetch boundary back one more window so the
-        // next scroll event tries the range before this gap instead of stopping.
-        const nextToMs = toMs - windowMs;
-        if (nextToMs > 0) {
-          state.fetchFromMs = nextToMs;
-        } else {
-          state.noMoreData = true;
-        }
-      } else {
-        onLoaded(bars.candles as Candle[]);
-      }
-    })
-    .catch(() => {
-      // Reset the fetch boundary so the user can retry by scrolling again.
-      // Without this, a transient network error permanently blocks history
-      // loading for the current view (lastFetchedBeforeMs stays set but no
-      // bars were prepended, so the eligibility guard never clears).
-      state.lastFetchedBeforeMs = 0;
-    })
-    .finally(() => {
-      state.loading = false;
-    });
-}
-
-function makeHistoryLoader(
-  symbol: string,
-  timeframeRef: {current: string},
-  seriesRef: {current: ISeriesApi<"Candlestick"> | null},
-  stateRef: {current: LoadMoreState},
-  onLoaded: (bars: Candle[]) => void,
-): (range: LogicalRange | null) => void {
-  return (range) => {
-    const series = seriesRef.current;
-    if (!range || !series) return;
-    const state = stateRef.current;
-    if (!isLoadMoreEligible(state, series, range)) return;
-    // Use the shifted boundary from a prior empty-range response when present,
-    // otherwise fall back to the series' current oldest bar.
-    const toMs = state.fetchFromMs > 0 ? state.fetchFromMs : getSeriesOldestMs(series);
-    if (toMs === 0) return;
-    state.loading = true;
-    state.lastFetchedBeforeMs = toMs;
-    state.fetchFromMs = 0;
-    // Read the timeframe from a ref: the chart (and this subscription) persists
-    // across TF changes, so the loader must always fetch the *current* TF.
-    fetchOlderRange(symbol, timeframeRef.current, toMs, state, onLoaded);
-  };
-}
+import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHud.tsx";
 
 // ── Props ────────────────────────────────────────────────────
 
@@ -220,690 +150,6 @@ export interface ChartPanelProps {
    * staleness watchdog must not treat the old last-bar as a data gap.
    */
   isReplaying?: boolean;
-}
-
-// ── Chart plugin overlays ─────────────────────────────────────────────────────
-
-function getForexSessionColor(utcHour: number): string {
-  if (utcHour >= 22 || utcHour < 8) return "rgba(255,200,50,0.04)";
-  if (utcHour >= 8 && utcHour < 16) return "rgba(50,200,255,0.04)";
-  if (utcHour >= 13) return "rgba(255,80,80,0.04)";
-  return "transparent";
-}
-
-const forexSessionHighlighter = (date: Time): string => getForexSessionColor(new Date((date as number) * 1000).getUTCHours());
-
-interface PluginBuildCtx {
-  isDark: boolean;
-  timeframe: Timeframe;
-  symbolCategory?: string;
-}
-
-const EQUITY_CATEGORY = /stock|equit|share|etf|index|indices/i;
-
-// Session breaks are intraday-only — on daily+ charts every bar is already a
-// full session. Equities/indices reset at 09:30 New York (RTH open); forex,
-// crypto and everything else reset at 00:00 UTC.
-function buildSessionBreaks(ctx: PluginBuildCtx): ISeriesPrimitive<Time> | null {
-  const intervalMs = TF_INTERVAL_MS[ctx.timeframe] ?? 60_000;
-  if (intervalMs >= 86_400_000) return null;
-  return new SessionBreaks({
-    color: ctx.isDark ? "rgba(130, 150, 190, 0.5)" : "rgba(90, 110, 150, 0.45)",
-    sessionStart: EQUITY_CATEGORY.test(ctx.symbolCategory ?? "") ? "ny-0930" : "utc-midnight",
-  });
-}
-
-const PLUGIN_FACTORIES: Record<string, (ctx: PluginBuildCtx) => ISeriesPrimitive<Time> | null> = {
-  crosshair: ({isDark}) =>
-    new CrosshairHighlightPrimitive({
-      color: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-    }),
-  session: () => new SessionHighlighting(forexSessionHighlighter),
-  "session-breaks": buildSessionBreaks,
-  bands: () => new BandsIndicator(),
-  tooltip: () => new TooltipPrimitive({}),
-  "delta-tooltip": () => new DeltaTooltipPrimitive({}),
-};
-
-function buildPlugin(id: string, ctx: PluginBuildCtx): ISeriesPrimitive<Time> | null {
-  return PLUGIN_FACTORIES[id]?.(ctx) ?? null;
-}
-
-// Shared OHLCV legend shape — derive the percent change once at the call site
-// so the crosshair, candle, and tick paths all produce identical legend objects.
-interface OhlcvLegend {
-  o: number;
-  h: number;
-  l: number;
-  c: number;
-  v: number;
-  change: number;
-}
-
-function candleToLegend(c: CandlestickData<Time>, volume: number): OhlcvLegend {
-  const change = c.open ? ((c.close - c.open) / c.open) * 100 : 0;
-  return {o: c.open, h: c.high, l: c.low, c: c.close, v: volume, change};
-}
-
-// ── Real-time series update helpers ──────────────────────────────────────────
-// Extracted from the live-candle / tick / bid-ask effects so each effect body
-// stays under the cognitive-complexity limit. Behaviour is unchanged — these are
-// pure relocations that operate on a shared context handed in by the effect.
-
-type ChartColors = (typeof CHART_COLORS)["dark"];
-type Ref<T> = {current: T};
-type LiveCandleData = {
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  timestamp: number;
-};
-type TickData = {bid: number; ask: number; timestamp: number};
-
-interface RtCtx {
-  series: ISeriesApi<"Candlestick">;
-  volume: ISeriesApi<"Histogram"> | null;
-  lastCandle: Ref<CandlestickData<Time> | null>;
-  liveCandleTs: Ref<number>;
-  legendVol: Ref<number>;
-  gapAt: Ref<number>;
-  bidLine: Ref<IPriceLine | null>;
-  askLine: Ref<IPriceLine | null>;
-  midLine: Ref<IPriceLine | null>;
-  colors: ChartColors;
-  timeframe: Timeframe;
-  symbol: string;
-  qc: ReturnType<typeof useQueryClient>;
-  setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>;
-}
-
-function intervalSecOf(tf: Timeframe): number {
-  return (TF_INTERVAL_MS[tf] ?? 60_000) / 1000;
-}
-
-// Paint the authoritative server volume bar for the current candle.
-function paintServerVolume(live: LiveCandleData, barTime: Time, ctx: RtCtx): void {
-  if (!ctx.volume || live.volume == null) return;
-  ctx.legendVol.current = live.volume;
-  try {
-    ctx.volume.update({
-      time: barTime,
-      value: live.volume,
-      color: live.close >= live.open ? ctx.colors.volumeUp : ctx.colors.volumeDown,
-    });
-  } catch {
-    /* safe to ignore */
-  }
-}
-
-// Primary: server-aggregated CandleUpdate (authoritative OHLCV).
-function applyServerCandle(live: LiveCandleData, ctx: RtCtx): void {
-  const ts = toUnixSeconds(live.timestamp);
-  if (Number.isNaN(ts) || ts <= 0 || !ctx.lastCandle.current) return;
-  if (ts - (ctx.lastCandle.current.time as number) > intervalSecOf(ctx.timeframe) * 1.5) {
-    requestGapRefetch(ctx.gapAt, ctx.qc, ctx.symbol, ctx.timeframe);
-  }
-  const bar: CandlestickData<Time> = {
-    time: ts as Time,
-    open: live.open,
-    high: live.high,
-    low: live.low,
-    close: live.close,
-  };
-  ctx.lastCandle.current = bar;
-  ctx.liveCandleTs.current = toUnixMs(live.timestamp);
-  try {
-    ctx.series.update(bar);
-  } catch {
-    /* timestamp older than series — safe to ignore */
-  }
-  paintServerVolume(live, ts as Time, ctx);
-  ctx.setLegend(candleToLegend(bar, live.volume || 0));
-}
-
-// Build the tick-smoothed bar for the current bucket (continuation or fresh).
-function buildTickBar(prev: CandlestickData<Time>, isContinuation: boolean, bucketTime: Time, mid: number, ctx: RtCtx): CandlestickData<Time> | null {
-  if (isContinuation) {
-    return {
-      time: bucketTime,
-      open: prev.open,
-      high: Math.max(prev.high, mid),
-      low: Math.min(prev.low, mid),
-      close: mid,
-    };
-  }
-  if ((bucketTime as number) <= (prev.time as number)) return null;
-  if ((bucketTime as number) - (prev.time as number) > intervalSecOf(ctx.timeframe) * 1.5) {
-    requestGapRefetch(ctx.gapAt, ctx.qc, ctx.symbol, ctx.timeframe);
-  }
-  const seedOpen = prev.close;
-  return {
-    time: bucketTime,
-    open: seedOpen,
-    high: Math.max(seedOpen, mid),
-    low: Math.min(seedOpen, mid),
-    close: mid,
-  };
-}
-
-// A new bucket has no aggregated volume yet — seed it at 0 so a fresh candle
-// never inherits the previous bar's full-height volume.
-function paintTickVolume(bar: CandlestickData<Time>, isContinuation: boolean, bucketTime: Time, ctx: RtCtx): void {
-  if (!ctx.volume) return;
-  if (!isContinuation) ctx.legendVol.current = 0;
-  try {
-    ctx.volume.update({
-      time: bucketTime,
-      value: ctx.legendVol.current,
-      color: bar.close >= bar.open ? ctx.colors.volumeUp : ctx.colors.volumeDown,
-    });
-  } catch {
-    /* safe to ignore */
-  }
-}
-
-// Secondary: tick smoothing between server CandleUpdate pulses.
-function applyTick(tick: TickData, ctx: RtCtx): void {
-  if (!tick.timestamp) return;
-  const tickMs = toUnixMs(tick.timestamp);
-  if (ctx.liveCandleTs.current && tickMs <= ctx.liveCandleTs.current) return;
-  const prev = ctx.lastCandle.current;
-  if (!prev) return;
-  const mid = (tick.bid + tick.ask) / 2;
-  const bucketTime = getCandleBucketTime(tickMs, ctx.timeframe) as Time;
-  const isContinuation = prev.time === bucketTime;
-  const bar = buildTickBar(prev, isContinuation, bucketTime, mid, ctx);
-  if (!bar) return;
-  ctx.lastCandle.current = bar;
-  try {
-    ctx.series.update(bar);
-  } catch {
-    /* safe to ignore */
-  }
-  paintTickVolume(bar, isContinuation, bucketTime, ctx);
-  ctx.setLegend((prevLegend) => ({
-    ...candleToLegend(bar, 0),
-    v: isContinuation ? (prevLegend?.v ?? 0) : 0,
-  }));
-}
-
-function removePriceLineSafe(ref: Ref<IPriceLine | null>, series: ISeriesApi<"Candlestick">): void {
-  if (!ref.current) return;
-  try {
-    series.removePriceLine(ref.current);
-  } catch {
-    /* ignore */
-  }
-  ref.current = null;
-}
-
-// Move an existing price line in place (applyOptions) or create it — avoids the
-// remove+create churn that flickers the chart at tick rate.
-function upsertPriceLine(ref: Ref<IPriceLine | null>, series: ISeriesApi<"Candlestick">, enabled: boolean, opts: Parameters<ISeriesApi<"Candlestick">["createPriceLine"]>[0]): void {
-  if (!enabled) {
-    removePriceLineSafe(ref, series);
-    return;
-  }
-  if (ref.current) {
-    try {
-      ref.current.applyOptions(opts);
-      return;
-    } catch {
-      ref.current = null;
-    }
-  }
-  ref.current = series.createPriceLine(opts);
-}
-
-function applyBidAskLines(tick: TickData | undefined, prefs: {showBidLine: boolean; showAskLine: boolean}, ctx: RtCtx): void {
-  const series = ctx.series;
-  if (!tick) {
-    removePriceLineSafe(ctx.bidLine, series);
-    removePriceLineSafe(ctx.askLine, series);
-    removePriceLineSafe(ctx.midLine, series);
-    return;
-  }
-  upsertPriceLine(ctx.bidLine, series, prefs.showBidLine, {
-    price: tick.bid,
-    color: ctx.colors.bidLine,
-    lineWidth: 2,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: "Bid",
-    axisLabelColor: ctx.colors.bidLabelBg,
-    axisLabelTextColor: "#ffffff",
-  });
-  upsertPriceLine(ctx.askLine, series, prefs.showAskLine, {
-    price: tick.ask,
-    color: ctx.colors.askLine,
-    lineWidth: 2,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: "Ask",
-    axisLabelColor: ctx.colors.askLabelBg,
-    axisLabelTextColor: "#ffffff",
-  });
-  // Mid line only when both bid+ask are hidden — otherwise it overlaps them.
-  upsertPriceLine(ctx.midLine, series, !prefs.showBidLine && !prefs.showAskLine, {
-    price: (tick.bid + tick.ask) / 2,
-    color: "#7aa2ff99",
-    lineWidth: 1,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: "",
-    axisLabelColor: "#3b5ab5",
-    axisLabelTextColor: "#ffffff",
-  });
-}
-
-function detachPlugins(series: ISeriesApi<"Candlestick">, list: ISeriesPrimitive<Time>[]): void {
-  for (const p of list) {
-    try {
-      series.detachPrimitive(p);
-    } catch {
-      /* stale ref */
-    }
-  }
-}
-
-function attachPlugins(series: ISeriesApi<"Candlestick">, ids: string[], ctx: PluginBuildCtx, list: ISeriesPrimitive<Time>[]): void {
-  for (const id of ids) {
-    const p = buildPlugin(id, ctx);
-    if (p) {
-      try {
-        series.attachPrimitive(p);
-        list.push(p);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-}
-
-// ── Server-data (setData) helpers ────────────────────────────────────────────
-// Extracted from the historical-fetch / periodic-sync effect so its body stays
-// under the complexity limit. Pure relocations — behaviour is unchanged.
-
-function liveBarFrom(live: LiveCandleData): CandlestickData<Time> | null {
-  const ts = toUnixSeconds(live.timestamp);
-  if (Number.isNaN(ts) || ts <= 0) return null;
-  return {time: ts as Time, open: live.open, high: live.high, low: live.low, close: live.close};
-}
-
-function legendFromSeries(chartData: CandlestickData<Time>[], volumeData: HistogramData<Time>[]): OhlcvLegend | null {
-  const last = chartData[chartData.length - 1];
-  if (!last) return null;
-  const vol = volumeData.length > 0 ? (volumeData[volumeData.length - 1]?.value ?? 0) : 0;
-  return candleToLegend(last, vol);
-}
-
-function scrollOrFit(chart: IChartApi | null, barCount: number): void {
-  const ts = chart?.timeScale();
-  if (!ts) return;
-  if (barCount > 150) ts.scrollToPosition(8, false);
-  else ts.fitContent();
-}
-
-// Re-apply the latest live bar after a periodic refetch (viewport preserved).
-function reapplyLive(live: LiveCandleData | undefined, ctx: RtCtx): void {
-  if (!live) return;
-  const bar = liveBarFrom(live);
-  if (!bar) return;
-  try {
-    ctx.series.update(bar);
-  } catch {
-    /* safe to ignore */
-  }
-  ctx.lastCandle.current = bar;
-}
-
-// Replay the buffered live candle immediately after history is painted so the
-// last bar isn't stuck at the final historical close until the next tick.
-function replayBufferedLive(buffered: LiveCandleData | undefined, chartData: CandlestickData<Time>[], ctx: RtCtx): void {
-  if (!buffered) return;
-  const liveTs = toUnixSeconds(buffered.timestamp);
-  const lastHistBarSec = (chartData[chartData.length - 1]?.time as number) ?? 0;
-  if (Number.isNaN(liveTs) || liveTs <= 0 || liveTs < lastHistBarSec) return;
-  const liveBar = liveBarFrom(buffered);
-  if (!liveBar) return;
-  try {
-    ctx.series.update(liveBar);
-    ctx.lastCandle.current = liveBar;
-    ctx.liveCandleTs.current = toUnixMs(buffered.timestamp);
-  } catch {
-    /* safe to ignore — timestamp may be older than series */
-  }
-}
-
-// If the freshest bar is >2 intervals stale, schedule one delayed refetch to
-// close the gap before any live CandleUpdate paints over it. Throttled to 3 s.
-function scheduleStaleRefetch(chartData: CandlestickData<Time>[], ctx: RtCtx): (() => void) | undefined {
-  const lastBarSec = (chartData[chartData.length - 1]?.time as number) ?? 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (lastBarSec <= 0 || nowSec - lastBarSec <= intervalSecOf(ctx.timeframe) * 2) return undefined;
-  const now = Date.now();
-  if (now - ctx.gapAt.current <= 3_000) return undefined;
-  ctx.gapAt.current = now;
-  const {symbol, timeframe, qc} = ctx;
-  const timer = window.setTimeout(() => {
-    qc.invalidateQueries({queryKey: queryKeys.market.candles(symbol, timeframe)});
-  }, 1_500);
-  return () => window.clearTimeout(timer);
-}
-
-// ── Position / order overlay helpers ─────────────────────────────────────────
-
-type SlTpField = "takeProfit" | "stopLoss";
-interface SlTpEntry {
-  line: IPriceLine;
-  price: number;
-  positionId: string;
-  field: SlTpField;
-  side: string;
-  entryPrice: number;
-  quantity: number;
-}
-type SlTpMap = Map<string, SlTpEntry>;
-interface OverlayOpts {
-  symbol: string;
-  colors: ChartColors;
-  contractSize: number;
-}
-
-function clearPriceLines(series: ISeriesApi<"Candlestick">, list: IPriceLine[]): void {
-  for (const pl of list) {
-    try {
-      series.removePriceLine(pl);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-// One SL or TP line for a position, registered in the drag-to-edit map.
-function addSlTpLine(series: ISeriesApi<"Candlestick">, pos: Position, field: SlTpField, price: number, pnl: number, out: IPriceLine[], map: SlTpMap, colors: ChartColors): void {
-  const isTp = field === "takeProfit";
-  const line = series.createPriceLine({
-    price,
-    color: isTp ? colors.tpLine : colors.slLine,
-    lineWidth: 2,
-    lineStyle: LineStyle.Dashed,
-    axisLabelVisible: true,
-    title: `${isTp ? "TP" : "SL"}  ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`,
-  });
-  out.push(line);
-  map.set(`${pos.id}:${isTp ? "tp" : "sl"}`, {
-    line,
-    price,
-    positionId: pos.id,
-    field,
-    side: pos.side,
-    entryPrice: pos.entryPrice,
-    quantity: pos.quantity,
-  });
-}
-
-function addPositionOverlay(series: ISeriesApi<"Candlestick">, pos: Position, opts: OverlayOpts, out: IPriceLine[], map: SlTpMap): void {
-  if (pos.symbolName !== opts.symbol || !Number.isFinite(pos.entryPrice)) return;
-  out.push(
-    series.createPriceLine({
-      price: pos.entryPrice,
-      color: pos.side === "LONG" ? opts.colors.up : opts.colors.down,
-      lineWidth: 1,
-      lineStyle: LineStyle.Dotted,
-      axisLabelVisible: true,
-      title: `${pos.side === "LONG" ? "buy" : "sell"} ${pos.quantity.toFixed(2)}`,
-    }),
-  );
-  const direction = pos.side === "LONG" ? 1 : -1;
-  const pnlAt = (target: number) => parseFloat(((target - pos.entryPrice) * direction * pos.quantity * opts.contractSize).toFixed(2));
-  if (typeof pos.takeProfit === "number" && Number.isFinite(pos.takeProfit)) {
-    addSlTpLine(series, pos, "takeProfit", pos.takeProfit, pnlAt(pos.takeProfit), out, map, opts.colors);
-  }
-  if (typeof pos.stopLoss === "number" && Number.isFinite(pos.stopLoss)) {
-    addSlTpLine(series, pos, "stopLoss", pos.stopLoss, pnlAt(pos.stopLoss), out, map, opts.colors);
-  }
-}
-
-function addOrderOverlay(series: ISeriesApi<"Candlestick">, ord: Order, symbol: string, orderColor: string, out: IPriceLine[]): void {
-  if (ord.symbolName !== symbol || ord.status !== "PENDING" || !Number.isFinite(ord.price as number)) {
-    return;
-  }
-  out.push(
-    series.createPriceLine({
-      price: ord.price as number,
-      color: orderColor,
-      lineWidth: 1,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: `[P] ${ord.side} ${ord.type} ${ord.quantity}`,
-    }),
-  );
-}
-
-// ── Chart interaction handlers ───────────────────────────────────────────────
-
-// Crosshair left the series — restore the legend to the latest live bar exactly
-// once so it doesn't stay frozen on the last hovered candle.
-function restoreLegendOnLeave(restored: Ref<boolean>, lastCandle: Ref<CandlestickData<Time> | null>, legendVol: Ref<number>, setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>): void {
-  if (!restored.current && lastCandle.current) {
-    setLegend(candleToLegend(lastCandle.current, legendVol.current));
-  }
-  restored.current = true;
-}
-
-// ── Replay trade-event marker helpers ────────────────────────────────────────
-
-type ReplayTradeEvent = NonNullable<ChartPanelProps["replayTradeEvents"]>[number];
-
-function entryMarker(ev: ReplayTradeEvent, time: Time): SeriesMarker<Time> {
-  const isBuy = ev.side === "BUY";
-  return {
-    time,
-    position: isBuy ? "belowBar" : "aboveBar",
-    color: isBuy ? "#2196F3" : "#FF9800",
-    shape: isBuy ? "arrowUp" : "arrowDown",
-    text: isBuy ? "B" : "S",
-  };
-}
-
-function exitMarker(ev: ReplayTradeEvent, time: Time): SeriesMarker<Time> {
-  const profit = ev.pnl != null && ev.pnl >= 0;
-  const text = ev.pnl != null ? `${ev.pnl >= 0 ? "+" : ""}$${Math.abs(ev.pnl).toFixed(0)}` : "Exit";
-  return {
-    time,
-    position: profit ? "aboveBar" : "belowBar",
-    color: profit ? "#0ecb81" : "#f6465d",
-    shape: "circle",
-    text,
-  };
-}
-
-function buildReplayMarker(ev: ReplayTradeEvent, timeframe: Timeframe): SeriesMarker<Time> | null {
-  const evMs = new Date(ev.timestamp).getTime();
-  if (Number.isNaN(evMs)) return null;
-  const time = getCandleBucketTime(evMs, timeframe) as Time;
-  if (ev.type === "entry") return entryMarker(ev, time);
-  if (ev.type === "exit") return exitMarker(ev, time);
-  return {
-    time,
-    position: "aboveBar",
-    color: "#FF1744",
-    shape: "square",
-    text: ev.ruleCode ?? "Rule",
-  };
-}
-
-// ── HUD presentational sub-components ────────────────────────────────────────
-// Extracted so the legend's per-value colour ternaries live here instead of
-// inflating the ChartPanel render function's cognitive complexity.
-
-function OhlcvCell({label, value, digits, up, bold}: {label: string; value: number; digits: number; up: boolean; bold?: boolean}) {
-  return (
-    <>
-      <span className="text-muted-foreground/70">{label}</span>
-      <span className={cn(up ? "text-[#0ecb81]" : "text-[#f6465d]", bold ? "font-semibold" : "font-medium")}>{value.toFixed(digits)}</span>
-    </>
-  );
-}
-
-function OhlcvLegendRow({legend, pipDigits}: {legend: OhlcvLegend; pipDigits: number}) {
-  const up = legend.c >= legend.o;
-  return (
-    <>
-      <OhlcvCell label="O" value={legend.o} digits={pipDigits} up={up} />
-      <OhlcvCell label="H" value={legend.h} digits={pipDigits} up={up} />
-      <OhlcvCell label="L" value={legend.l} digits={pipDigits} up={up} />
-      <OhlcvCell label="C" value={legend.c} digits={pipDigits} up={up} bold />
-      <span className={cn("font-semibold", legend.change >= 0 ? "text-[#0ecb81]" : "text-[#f6465d]")}>
-        {legend.change >= 0 ? "+" : ""}
-        {legend.change.toFixed(2)}%
-      </span>
-      {legend.v > 0 && (
-        <>
-          <span className="text-muted-foreground/70">V</span>
-          <span className="text-foreground/60">{legend.v.toLocaleString()}</span>
-        </>
-      )}
-    </>
-  );
-}
-
-function BidAskRow({tick, pipDigits}: {tick: TickData; pipDigits: number}) {
-  const spread = ((tick.ask - tick.bid) * 10 ** pipDigits).toFixed(1);
-  return (
-    <div className="flex items-center gap-2 text-[10px] font-mono">
-      <span className="text-muted-foreground/50">Bid</span>
-      <span className="text-[#0ecb81]/80">{tick.bid.toFixed(pipDigits)}</span>
-      <span className="text-muted-foreground/50">Ask</span>
-      <span className="text-[#f6465d]/80">{tick.ask.toFixed(pipDigits)}</span>
-      <span className="text-muted-foreground/50">Spread</span>
-      <span className="text-foreground/50">{spread}</span>
-    </div>
-  );
-}
-
-// Symbol / timeframe / OHLCV / countdown header in the chart's top-left corner.
-// Extracted so the visibility branching doesn't inflate ChartPanel's CC.
-function ChartLegendHeader({
-  selectedSymbol,
-  timeframe,
-  legend,
-  countdown,
-  tick,
-  pipDigits,
-  showOhlcLegend,
-  showCountdown,
-}: {
-  selectedSymbol: string;
-  timeframe: Timeframe;
-  legend: OhlcvLegend | null;
-  countdown: string;
-  tick?: TickData;
-  pipDigits: number;
-  showOhlcLegend: boolean;
-  showCountdown: boolean;
-}) {
-  return (
-    <div className="absolute top-2 left-3 z-10 pointer-events-none select-none">
-      <div className="flex items-center gap-2 text-[11px] font-mono leading-none mb-1">
-        <span className="text-foreground font-bold text-[13px] tracking-tight">{selectedSymbol}</span>
-        <span className="text-muted-foreground font-medium">{timeframe}</span>
-        {legend && showOhlcLegend && <OhlcvLegendRow legend={legend} pipDigits={pipDigits} />}
-        {countdown && showCountdown && (
-          <span className="text-muted-foreground/60 flex items-center gap-0.5">
-            <Clock className="h-2.5 w-2.5 opacity-50" />
-            {countdown}
-          </span>
-        )}
-      </div>
-      {/* Secondary info row: Bid / Ask / Spread */}
-      {tick && <BidAskRow tick={tick} pipDigits={pipDigits} />}
-    </div>
-  );
-}
-
-// Floating toolbar / settings dialog for the currently selected drawing.
-// Extracted so the selection branching doesn't inflate ChartPanel's CC.
-function DrawingOverlays({
-  drawing,
-  showSettings,
-  currentTf,
-  onUpdate,
-  onClone,
-  onRemove,
-  onOpenSettings,
-  onCloseSettings,
-}: {
-  drawing: DrawingLine | null;
-  showSettings: boolean;
-  currentTf: string;
-  onUpdate: (d: DrawingLine) => void;
-  onClone: () => void;
-  onRemove: () => void;
-  onOpenSettings: () => void;
-  onCloseSettings: () => void;
-}) {
-  if (!drawing) return null;
-  if (showSettings) {
-    return <DrawingSettingsDialog drawing={drawing} currentTf={currentTf} onUpdate={onUpdate} onRemove={onRemove} onClose={onCloseSettings} />;
-  }
-  return <DrawingFloatingToolbar drawing={drawing} onUpdate={onUpdate} onClone={onClone} onRemove={onRemove} onOpenSettings={onOpenSettings} />;
-}
-
-// Object-tree toggle button + panel. Extracted so the open/close branching
-// doesn't inflate ChartPanel's cognitive complexity.
-function ObjectTreeOverlay({
-  drawings,
-  selectedIds,
-  pipDigits,
-  currentTf,
-  open,
-  onToggle,
-  onSelect,
-  onUpdate,
-  onRemove,
-  onReorder,
-}: {
-  drawings: DrawingLine[];
-  selectedIds: string[];
-  pipDigits: number;
-  currentTf: string;
-  open: boolean;
-  onToggle: () => void;
-  onSelect: (d: DrawingLine) => void;
-  onUpdate: (d: DrawingLine) => void;
-  onRemove: (id: string) => void;
-  onReorder: (d: DrawingLine, dir: "front" | "back") => void;
-}) {
-  if (drawings.length === 0) return null;
-  return (
-    <>
-      <button
-        type="button"
-        title="Object tree (drawings)"
-        onClick={onToggle}
-        className={cn("absolute bottom-2 left-2 z-10 p-1.5 rounded-md border border-border bg-card/90 shadow", open ? "text-primary" : "text-muted-foreground hover:text-foreground")}
-      >
-        <ListTree className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <ObjectTreePanel
-          drawings={drawings}
-          selectedIds={selectedIds}
-          pipDigits={pipDigits}
-          currentTf={currentTf}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          onRemove={onRemove}
-          onReorder={onReorder}
-          onClose={onToggle}
-        />
-      )}
-    </>
-  );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1491,7 +737,7 @@ export function ChartPanel({
     const series = candleSeriesRef.current;
     if (!series || allCandles.length === 0) return;
 
-    detachAll([strategyPrimitivesRef.current, dayOpenBandRef.current, dayLevelsRef.current], series);
+    detachPrimitiveArrays(series, [strategyPrimitivesRef.current, dayOpenBandRef.current, dayLevelsRef.current]);
 
     strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, allCandles);
     dayOpenBandRef.current = highlightFirstMinutesOfDay(series, allCandles, {
@@ -1507,22 +753,8 @@ export function ChartPanel({
     });
   }, [allCandles, chartEpoch]);
 
-  function detachAll(
-    primitiveArrays: ISeriesPrimitive<Time>[][],
-    series: ISeriesApi<"Candlestick", Time, CandlestickData<Time> | WhitespaceData<Time>, CandlestickSeriesOptions, DeepPartial<CandlestickStyleOptions & SeriesOptionsCommon>> | null,
-  ): void {
-    if (!series) return;
-    for (const arr of primitiveArrays) {
-      for (const p of arr) {
-        try {
-          series.detachPrimitive(p);
-        } catch {
-          /* primitive belonged to a stale series — safe to ignore */
-        }
-      }
-      arr.length = 0;
-    }
-  }
+  // Primitive detach/rebuild for the strategy layers is handled by the shared
+  // `detachPrimitiveArrays` helper from ./chartPlugins.ts (see call above).
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1866,63 +1098,4 @@ export function ChartPanel({
       <DrawingToolRail drawingTool={drawingTool} onDrawingTool={(t) => onDrawingToolSelect?.(t)} />
     </div>
   );
-}
-
-// ── Local helper: Build chart data (candles + volume) ────────
-
-type CandleRow = CandlestickData<Time> & {volume: number};
-
-// Treat values below 1e12 as seconds, at/above as milliseconds.
-function secOrMsToMs(v: number): number {
-  return v < 1_000_000_000_000 ? v * 1000 : v;
-}
-
-// Normalise a raw candle's timestamp (seconds, ms, or ISO string) to unix seconds.
-function candleTimeSec(c: Candle): number {
-  let tMs = NaN;
-  if (typeof c.time === "number" && c.time > 0) tMs = secOrMsToMs(c.time);
-  else if (typeof c.timestamp === "number" && c.timestamp > 0) tMs = secOrMsToMs(c.timestamp);
-  else if (typeof c.timestamp === "string") tMs = Date.parse(c.timestamp);
-  return Number.isNaN(tMs) ? NaN : Math.floor(tMs / 1000);
-}
-
-function toCandleRow(c: Candle): CandleRow {
-  return {
-    time: candleTimeSec(c) as Time,
-    open: Number(c.open),
-    high: Number(c.high),
-    low: Number(c.low),
-    close: Number(c.close),
-    volume: Number(c.volume) || 0,
-  };
-}
-
-// Keep the last row for each timestamp (input must be time-sorted ascending).
-function dedupeByTime(sorted: CandleRow[]): CandleRow[] {
-  const out: CandleRow[] = [];
-  for (let i = 0; i < sorted.length; i++) {
-    const cur = sorted[i]!;
-    const next = sorted[i + 1];
-    if (!next || (cur.time as number) !== (next.time as number)) out.push(cur);
-  }
-  return out;
-}
-
-function useChartData(candles: Candle[], colors: {volumeUp: string; volumeDown: string}) {
-  return useMemo(() => {
-    const sorted = candles
-      .map(toCandleRow)
-      .filter((c) => !Number.isNaN(c.time as number) && (c.time as number) > 0)
-      .sort((a, b) => (a.time as number) - (b.time as number));
-    const deduped = dedupeByTime(sorted);
-
-    const chartData: CandlestickData<Time>[] = deduped.map(({volume: _v, ...rest}) => rest);
-    const volumeData: HistogramData<Time>[] = deduped.map((c) => ({
-      time: c.time,
-      value: c.volume,
-      color: c.close >= c.open ? colors.volumeUp : colors.volumeDown,
-    }));
-
-    return {chartData, volumeData};
-  }, [candles, colors.volumeUp, colors.volumeDown]);
 }
