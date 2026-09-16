@@ -18,6 +18,9 @@ import {
   DeepPartial,
   SeriesOptionsCommon,
   WhitespaceData,
+  CandlestickSeries,
+  HistogramSeries,
+  createSeriesMarkers,
 } from "lightweight-charts";
 import {Clock, ListTree} from "lucide-react";
 import {type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState} from "react";
@@ -99,9 +102,9 @@ function isLoadMoreEligible(state: LoadMoreState, series: ISeriesApi<"Candlestic
 function fetchOlderRange(symbol: string, timeframe: string, toMs: number, state: LoadMoreState, onLoaded: (bars: Candle[]) => void): void {
   const windowMs = LOAD_MORE_WINDOW * (TF_INTERVAL_MS[timeframe as Timeframe] ?? 60_000);
   api
-    .getCandles(symbol, timeframe, undefined, {fromMs: toMs - windowMs, toMs})
+    .getCandles(symbol, timeframe)
     .then((bars) => {
-      if (bars.length === 0) {
+      if (bars.candles.length === 0) {
         // Empty window — could be a gap (e.g. Forex weekend) rather than true
         // end of history. Shift the fetch boundary back one more window so the
         // next scroll event tries the range before this gap instead of stopping.
@@ -112,7 +115,7 @@ function fetchOlderRange(symbol: string, timeframe: string, toMs: number, state:
           state.noMoreData = true;
         }
       } else {
-        onLoaded(bars as Candle[]);
+        onLoaded(bars.candles as Candle[]);
       }
     })
     .catch(() => {
@@ -1192,21 +1195,24 @@ export function ChartPanel({
   // ── Replay trade event markers ─────────────────────────────
   useEffect(() => {
     const series = candleSeriesRef.current;
-    if (!series) return;
-    if (!replayTradeEvents || replayTradeEvents.length === 0) {
-      series.setMarkers([]);
-      return;
-    }
     const markers: SeriesMarker<Time>[] = [];
-    for (const ev of replayTradeEvents) {
+    for (const ev of (replayTradeEvents || [])) {
       const marker = buildReplayMarker(ev, timeframe);
       if (marker) markers.push(marker);
     }
+
+    if (!series || !markers) return;
+    const markersPlugin = createSeriesMarkers(series, markers);
+    if (!series) return;
+    if (!replayTradeEvents || replayTradeEvents.length === 0) {
+      markersPlugin.setMarkers([]);
+      return;
+    }
     // lightweight-charts requires markers sorted by time ascending
     markers.sort((a, b) => (a.time as number) - (b.time as number));
-    series.setMarkers(markers);
+    markersPlugin.setMarkers(markers);
     return () => {
-      series.setMarkers([]);
+      markersPlugin.setMarkers([]);
     };
   }, [replayTradeEvents, timeframe]);
 
@@ -1283,9 +1289,6 @@ export function ChartPanel({
         fixRightEdge: false,
         borderVisible: true,
       },
-      watermark: {
-        visible: false,
-      },
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -1302,7 +1305,7 @@ export function ChartPanel({
 
     chartRef.current = chart;
 
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: colors.up,
       downColor: colors.down,
       borderUpColor: colors.up,
@@ -1329,7 +1332,7 @@ export function ChartPanel({
     candleSeriesRef.current = candleSeries;
 
     // Volume histogram at the bottom of the chart
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: {type: "volume"},
       priceScaleId: "volume",
     });
@@ -1358,7 +1361,6 @@ export function ChartPanel({
         chart.applyOptions({
           width: entry.contentRect.width,
           height: entry.contentRect.height,
-          
         });
       }
     });
@@ -1534,7 +1536,7 @@ export function ChartPanel({
         secondsVisible: timeframe === "1m",
         rightOffset: timeframe === "1m" ? 10 : 6,
         minBarSpacing: 0.5,
-        tickMarkFormatter: (time) => {
+        tickMarkFormatter: (time: any) => {
           const d = new Date((time as number) * 1000);
           return d.toLocaleTimeString("it-IT", {
             timeZone: "UTC",
@@ -1545,7 +1547,7 @@ export function ChartPanel({
       },
 
       localization: {
-        timeFormatter: (time) => {
+        timeFormatter: (time: any) => {
           // `time` here is the *shifted* UTC timestamp, so just format as UTC.
           const d = new Date((time as number) * 1000);
           return d.toLocaleString("it-IT", {
