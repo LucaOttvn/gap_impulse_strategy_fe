@@ -1,3 +1,8 @@
+import { useDragOffset } from "@/hooks/useDragOffset";
+import { FIB_EXT_LEVELS, FIB_LEVELS } from "@/lib/chart-plugins/drawing-tools/resolve";
+import { cn } from "@/lib/utils";
+import { DrawingLine, DrawingLineStyle, DRAWING_COLORS, DRAWING_WIDTHS } from "@/pages/trading/constants";
+import { DrawingTemplate, getTemplates, setTypeDefault, saveTemplate } from "@/pages/trading/drawingStyles";
 import {
   Bell,
   ChevronsDown,
@@ -12,21 +17,6 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { useDragOffset } from "../../hooks/useDragOffset.ts";
-import { FIB_EXT_LEVELS, FIB_LEVELS } from "../../lib/chart-plugins/drawing-tools/resolve.ts";
-import { cn } from "../../lib/utils.ts";
-import {
-  DRAWING_COLORS,
-  DRAWING_WIDTHS,
-  type DrawingLine,
-  type DrawingLineStyle,
-} from "./constants.ts";
-import {
-  type DrawingTemplate,
-  getTemplates,
-  saveTemplate,
-  setTypeDefault,
-} from "./drawingStyles.ts";
 
 // ── Floating toolbar (TradingView-style) shown while a drawing is selected ──
 

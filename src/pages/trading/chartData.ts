@@ -1,7 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════════
-// chartData.ts — Candle → lightweight-charts data conversion + useChartData hook
-// ═════════════════════════════════════════════════════════════════════════════
-//
 // PURPOSE
 // -------
 // Converts the raw `Candle[]` the server/API returns into the two parallel

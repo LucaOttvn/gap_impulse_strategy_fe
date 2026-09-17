@@ -1,9 +1,9 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { GripVertical, Newspaper, Settings2, X } from "lucide-react";
-import { useDragOffset } from "../../hooks/useDragOffset.ts";
-import { cn } from "../../lib/utils.ts";
-import type { NewsOverlayConfig } from "./constants.ts";
-import type { NewsPopupState } from "./useNewsOverlay.ts";
+import { useDragOffset } from "@/hooks/useDragOffset";
+import { cn } from "@/lib/utils";
+import { NewsOverlayConfig } from "@/pages/trading/constants";
+import { NewsPopupState } from "@/pages/trading/useNewsOverlay";
 
 interface NewsOverlayProps {
   newsConfig: NewsOverlayConfig;

@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { cn } from "../../lib/utils.ts";
+import { cn } from "../lib/utils.ts";
 
 // ── Chart context menu (TradingView-style right-click menu) ──────────────────
 // Rendered by ChartPanel at the cursor position when the user right-clicks

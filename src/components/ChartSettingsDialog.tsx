@@ -1,3 +1,7 @@
+import { ChartPreferences, updateChartPreferences } from "@/hooks/useChartPreferences";
+import { useDragOffset } from "@/hooks/useDragOffset";
+import { cn } from "@/lib/utils";
+import { ChartColors, CHART_COLORS } from "@/pages/trading/constants";
 import {
   CandlestickChart,
   Crosshair,
@@ -9,10 +13,6 @@ import {
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { type ChartPreferences, updateChartPreferences } from "../../hooks/useChartPreferences.ts";
-import { useDragOffset } from "../../hooks/useDragOffset.ts";
-import { cn } from "../../lib/utils.ts";
-import { CHART_COLORS, type ChartColors } from "./constants.ts";
 
 // ── Chart Settings dialog ─────────────────────────────────────────────────────
 // Opened from the chart context menu. Every control writes straight through

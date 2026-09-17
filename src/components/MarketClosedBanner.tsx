@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Clock } from "lucide-react";
-import type { Symbol } from "../../services/schemas";
-import { useTradingStore } from "../../services/store.tsx";
+import { useTradingStore } from "@/services/store";
 
 /**
  * How long after the last tick we consider the feed still live.

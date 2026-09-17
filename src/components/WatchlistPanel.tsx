@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { Star } from "lucide-react";
-import { usePlaceOrder } from "../../services/queries.ts";
-import { formatNumber, cn } from "../../lib/utils.ts";
-import { toast } from "../../services/toast.ts";
+import { usePlaceOrder } from "@/services/queries";
+import { cn, formatNumber } from "@/lib/utils";
+import { toast } from "@/services/toast";
 
 export function WatchlistPanel({
   symbols,

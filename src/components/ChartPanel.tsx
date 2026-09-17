@@ -36,54 +36,54 @@
 // The remaining file is: props contract + effect wiring + JSX.
 // ═════════════════════════════════════════════════════════════════════════════
 
-import {useQueryClient} from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  CandlestickSeries,
-  type CandlestickData,
-  ColorType,
-  CrosshairMode,
-  createChart,
-  createSeriesMarkers,
-  HistogramSeries,
-  type HistogramData,
-  type IChartApi,
-  type IPriceLine,
-  type ISeriesApi,
-  type ISeriesPrimitive,
-  LineStyle,
-  type SeriesMarker,
-  type Time,
+    CandlestickSeries,
+    type CandlestickData,
+    ColorType,
+    CrosshairMode,
+    createChart,
+    createSeriesMarkers,
+    HistogramSeries,
+    type HistogramData,
+    type IChartApi,
+    type IPriceLine,
+    type ISeriesApi,
+    type ISeriesPrimitive,
+    LineStyle,
+    type SeriesMarker,
+    type Time,
 } from "lightweight-charts";
-import {type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState} from "react";
-import {useChartPreferences} from "../../hooks/useChartPreferences.ts";
-import {detectCrossings, playAlertBeep} from "../../lib/chart-plugins/drawing-tools/line-alerts.ts";
-import {DrawingToolsManager} from "../../lib/chart-plugins/drawing-tools/manager.ts";
-import type {IndicatorType} from "../../lib/indicators.ts";
-import {cn} from "../../lib/utils.ts";
-import type {Candle, Order, Position, Symbol} from "../../services/schemas.ts";
-import {toast} from "../../services/toast.ts";
-import {CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe} from "./constants.ts";
-import {ChartContextMenu} from "./ChartContextMenu.tsx";
-import {ChartSettingsDialog} from "./ChartSettingsDialog.tsx";
-import {DrawingContextMenu} from "./DrawingToolsOverlay.tsx";
-import {DrawingToolRail} from "./DrawingToolRail.tsx";
-import {DRAWING_STYLES_EVENT, getStyleDefaults} from "./drawingStyles.ts";
-import {NewsOverlay} from "./NewsOverlay.tsx";
-import {drawDayLevels, drawGapsImpulseStrategy, highlightFirstMinutesOfDay} from "@/services/utils/customDrawingTools.ts";
-import {formatCountdown, getMinMove} from "./utils.ts";
-import {useChartData} from "./chartData.ts";
-import {makeHistoryLoader, type LoadMoreState} from "./chartHistoryLoader.ts";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useChartPreferences } from "../hooks/useChartPreferences.ts";
+import { detectCrossings, playAlertBeep } from "../lib/chart-plugins/drawing-tools/line-alerts.ts";
+import { DrawingToolsManager } from "../lib/chart-plugins/drawing-tools/manager.ts";
+import type { IndicatorType } from "../lib/indicators.ts";
+import { cn } from "../lib/utils.ts";
+import type { Candle, Order, Position, Symbol } from "../services/schemas.ts";
+import { toast } from "../services/toast.ts";
+import { CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe } from "../pages/trading/constants.ts";
+import { ChartContextMenu } from "./ChartContextMenu.tsx";
+import { DRAWING_STYLES_EVENT, getStyleDefaults } from "../pages/trading/drawingStyles.ts";
+import { drawDayLevels, drawGapsImpulseStrategy, highlightFirstMinutesOfDay } from "@/services/utils/customDrawingTools.ts";
+import { formatCountdown, getMinMove } from "../pages/trading/utils.ts";
+import { useChartData } from "../pages/trading/chartData.ts";
+import { makeHistoryLoader, type LoadMoreState } from "../pages/trading/chartHistoryLoader.ts";
 
-import {attachPlugins, detachPlugins, detachPrimitiveArrays} from "./chartPlugins.ts";
-import {addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap} from "./chartPositionOverlays.ts";
-import {buildReplayMarker} from "./chartReplayMarkers.ts";
-import {applyBidAskLines, applyServerCandle, applyTick, legendFromSeries, reapplyLive, replayBufferedLive, requestGapRefetch, restoreLegendOnLeave, scheduleStaleRefetch, scrollOrFit, type RtCtx} from "./chartRealtime.ts";
-import {candleToLegend, type OhlcvLegend} from "./chartTypes.ts";
-import {useChallengeLevels} from "./useChallengeLevels.ts";
-import {useIndicators} from "./useIndicators.ts";
-import {useNewsOverlay} from "./useNewsOverlay.ts";
-import {useSlTpDrag} from "./useSlTpDrag.ts";
+import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../pages/trading/chartPlugins.ts";
+import { addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap } from "../pages/trading/chartPositionOverlays.ts";
+import { buildReplayMarker } from "../pages/trading/chartReplayMarkers.ts";
+import { applyBidAskLines, applyServerCandle, applyTick, legendFromSeries, reapplyLive, replayBufferedLive, requestGapRefetch, restoreLegendOnLeave, scheduleStaleRefetch, scrollOrFit, type RtCtx } from "../pages/trading/chartRealtime.ts";
+import { candleToLegend, type OhlcvLegend } from "../pages/trading/chartTypes.ts";
+import { useChallengeLevels } from "../pages/trading/useChallengeLevels.ts";
+import { useIndicators } from "../pages/trading/useIndicators.ts";
+import { useNewsOverlay } from "../pages/trading/useNewsOverlay.ts";
+import { useSlTpDrag } from "../pages/trading/useSlTpDrag.ts";
 import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHud.tsx";
+import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
+import { DrawingToolRail } from "./DrawingToolRail.tsx";
+import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
+import { NewsOverlay } from "./NewsOverlay.tsx";
 
 // ── Props ────────────────────────────────────────────────────
 

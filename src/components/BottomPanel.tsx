@@ -1,29 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 import { TrendingUp, Clock, History, Globe, Newspaper, Bot } from "lucide-react";
-import { useAuthStore } from "../../services/store.tsx";
-import { useTradingStore } from "../../services/store.tsx";
+import { useAuthStore } from "../services/store.tsx";
+import { useTradingStore } from "../services/store.tsx";
 import {
   useCancelOrder,
   useClosePosition,
   useCloseAllPositions,
   useClosedPositions,
-} from "../../services/queries.ts";
+} from "../services/queries.ts";
 import type {
   JournalEntry,
   CreateJournalEntryInput,
   UpdateJournalEntryInput,
-} from "../../services/api/journal.ts";
-import type { Account, ClosedPosition, Order, Position } from "../../services/schemas.ts";
-import { Button } from "../../components/ui/button.tsx";
-import { TradeJournalPanel } from "../../components/TradingDialogs.tsx";
-import { AiTraderPanel } from "../AiTraderPage.tsx";
-import { TradingViewEconomicCalendar } from "../../components/TradingViewWidgets.tsx";
-import { toast } from "../../services/toast.ts";
-import { formatCurrency, formatNumber, formatDate, cn, pnlClass } from "../../lib/utils.ts";
-import { MOCK_EVENTS, MOCK_NEWS } from "./constants.ts";
-import { PositionsTable } from "./PositionsTable.tsx";
+} from "../services/api/journal.ts";
+import type { Account, ClosedPosition, Order, Position } from "../services/schemas.ts";
+import { Button } from "./ui/button.tsx";
+import { TradeJournalPanel } from "./TradingDialogs.tsx";
+import { TradingViewEconomicCalendar } from "./TradingViewWidgets.tsx";
+import { toast } from "../services/toast.ts";
+import { formatCurrency, formatNumber, formatDate, cn, pnlClass } from "../lib/utils.ts";
+import { MOCK_EVENTS, MOCK_NEWS } from "../pages/trading/constants.ts";
+import { computeLivePnl, computeLivePrice } from "../lib/livePnl.ts";
 import { OrdersTable } from "./OrdersTable.tsx";
-import { computeLivePnl, computeLivePrice } from "../../lib/livePnl.ts";
+import { PositionsTable } from "./PositionsTable.tsx";
 
 type TradingActionError = {
   error?: { message?: string };
@@ -292,7 +291,6 @@ export function BottomPanel({
         )}
         {tab === "calendar" && <EconomicCalendar />}
         {tab === "news" && <NewsFeed />}
-        {tab === "ai-trader" && <AiTraderPanel accountId={accountId} />}
       </div>
     </div>
   );

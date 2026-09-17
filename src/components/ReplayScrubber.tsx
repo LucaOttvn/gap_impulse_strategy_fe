@@ -1,7 +1,7 @@
+import { accountsApi } from "@/services/api/accounts";
+import { useReplaySession } from "@/services/queries";
+import { useTradingStore } from "@/services/store";
 import { useRef, useCallback } from "react";
-import { useTradingStore } from "../../services/store.tsx";
-import { useReplaySession } from "../../services/queries.ts";
-import { accountsApi } from "../../services/api/accounts.ts";
 
 function formatTime(epochMs: number): string {
   return new Date(epochMs).toLocaleTimeString("en-US", {

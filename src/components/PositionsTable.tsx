@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { X, Scissors } from "lucide-react";
-import { formatNumber, formatCurrency, formatDate, cn, pnlClass } from "../../lib/utils.ts";
+import { cn, formatNumber, pnlClass, formatCurrency, formatDate } from "@/lib/utils";
 
 interface PositionRow {
   id: string;

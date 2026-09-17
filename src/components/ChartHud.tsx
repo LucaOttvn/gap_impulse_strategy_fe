@@ -1,7 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════════
-// chartHud.tsx — Presentational HUD overlays for the chart panel
-// ═════════════════════════════════════════════════════════════════════════════
-//
 // PURPOSE
 // -------
 // Small, purely presentational React components that float on top of the chart
@@ -30,12 +26,12 @@
 // These are used exclusively by ChartPanel.tsx.
 // ═════════════════════════════════════════════════════════════════════════════
 
-import {Clock, ListTree} from "lucide-react";
-import {cn} from "../../lib/utils.ts";
-import {DrawingFloatingToolbar, DrawingSettingsDialog} from "./DrawingToolsOverlay.tsx";
-import {ObjectTreePanel} from "./ObjectTreePanel.tsx";
-import type {OhlcvLegend, TickData} from "./chartTypes.ts";
-import type {DrawingLine, Timeframe} from "./constants.ts";
+import { cn } from "@/lib/utils";
+import { OhlcvLegend, TickData } from "@/pages/trading/chartTypes";
+import { Timeframe, DrawingLine } from "@/pages/trading/constants";
+import { ObjectTreePanel } from "@/components/ObjectTreePanel";
+import { Clock, ListTree } from "lucide-react";
+import { DrawingSettingsDialog, DrawingFloatingToolbar } from "./DrawingToolsOverlay";
 
 // ── HUD presentational sub-components ────────────────────────────────────────
 // Extracted so the legend's per-value colour ternaries live here instead of

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Play, Pause, Square } from "lucide-react";
-import { cn } from "../../lib/utils.ts";
-import { useTradingStore } from "../../services/store.tsx";
-import { accountsApi } from "../../services/api/accounts.ts";
+import { cn } from "@/lib/utils";
+import { accountsApi } from "@/services/api/accounts";
+import { useTradingStore } from "@/services/store";
 
 const SPEED_OPTIONS = [0.5, 1, 2, 5, 10] as const;
 type Speed = (typeof SPEED_OPTIONS)[number];

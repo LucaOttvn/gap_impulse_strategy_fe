@@ -34,10 +34,9 @@ import {
 import type { Order, PlaceOrderInput, Position, Symbol } from "../services/schemas.ts";
 import { useTradingStore } from "../services/store.tsx";
 import { toast } from "../services/toast.ts";
-import { AiTraderPanel } from "./AiTraderPage.tsx";
-import { BottomPanel } from "./trading/BottomPanel.tsx";
-import { ChartPanel } from "./trading/ChartPanel.tsx";
-import { ChartToolbar } from "./trading/ChartToolbar.tsx";
+import { BottomPanel } from "../components/BottomPanel.tsx";
+import { ChartPanel } from "../components/ChartPanel.tsx";
+import { ChartToolbar } from "../components/ChartToolbar.tsx";
 import {
   type DrawingTool,
   type MagnetMode,
@@ -45,14 +44,15 @@ import {
   TIMEFRAMES,
   type Timeframe,
 } from "./trading/constants.ts";
-import { DOMPanel } from "./trading/DOMPanel.tsx";
-import { MarketClosedBanner } from "./trading/MarketClosedBanner.tsx";
-import { OrderPanel } from "./trading/OrderPanel.tsx";
-import { ReplayScrubber } from "./trading/ReplayScrubber.tsx";
 import { useReplayChartData } from "./trading/useReplayChartData.ts";
 import { useReplayPlayback } from "./trading/useReplayPlayback.ts";
 import { getPipDigits } from "./trading/utils.ts";
-import { WatchlistPanel } from "./trading/WatchlistPanel.tsx";
+import { DOMPanel } from "@/components/DOMPanel.tsx";
+import { MarketClosedBanner } from "@/components/MarketClosedBanner.tsx";
+import { OrderPanel } from "@/components/OrderPanel.tsx";
+import { ReplayScrubber } from "@/components/ReplayScrubber.tsx";
+import { WatchlistPanel } from "@/components/WatchlistPanel.tsx";
+
 
 type ErrorWithMessage = { message?: string };
 
@@ -597,11 +597,6 @@ export function TradingPage() {
             {rightPanel === "news" && (
               <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 <MarketNewsFeed symbol={selectedSymbol} />
-              </div>
-            )}
-            {rightPanel === "ai-trader" && (
-              <div className="flex-1 overflow-hidden">
-                <AiTraderPanel accountId={activeAccountId} />
               </div>
             )}
             {rightPanel === "tv-analysis" && (

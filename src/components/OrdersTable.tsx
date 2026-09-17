@@ -1,4 +1,5 @@
-import { formatNumber, formatDate } from "../../lib/utils.ts";
+import { formatNumber, formatDate } from "@/lib/utils";
+
 
 interface OrderRow {
   id: string;

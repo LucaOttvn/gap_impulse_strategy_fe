@@ -9,14 +9,14 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useAuthStore } from "../../services/store.tsx";
-import { usePlaceOrder } from "../../services/queries.ts";
-import { readTraderPrefs } from "../../hooks/useTraderPreferences.ts";
-import { Button } from "../../components/ui/button.tsx";
-import { DisconnectedTradingBanner } from "../../components/ConnectionIndicator.tsx";
-import type { PlaceOrderInput } from "../../services/schemas.ts";
-import { toast } from "../../services/toast.ts";
-import { formatCurrency, formatNumber, cn } from "../../lib/utils.ts";
+import { readTraderPrefs } from "@/hooks/useTraderPreferences";
+import { cn, formatNumber, formatCurrency } from "@/lib/utils";
+import { usePlaceOrder } from "@/services/queries";
+import { PlaceOrderInput } from "@/services/schemas";
+import { useAuthStore } from "@/services/store";
+import { toast } from "@/services/toast";
+import { DisconnectedTradingBanner } from "./ConnectionIndicator";
+import { Button } from "./ui/button";
 
 type ConfirmableOrder = PlaceOrderInput & { _submit: () => Promise<unknown> };
 

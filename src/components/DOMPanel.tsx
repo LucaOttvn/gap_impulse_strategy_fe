@@ -1,5 +1,5 @@
+import { cn, formatNumber } from "@/lib/utils";
 import { useMemo } from "react";
-import { formatNumber, cn } from "../../lib/utils.ts";
 
 export function DOMPanel({
   symbol,

@@ -1,7 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════════
-// chartPositionOverlays.ts — Position / order price-line overlays + SL/TP map
-// ═════════════════════════════════════════════════════════════════════════════
-//
 // PURPOSE
 // -------
 // Renders the trading overlays drawn as horizontal price lines on the chart:

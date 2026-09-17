@@ -13,8 +13,8 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import { cn } from "../../lib/utils.ts";
-import type { DrawingLine } from "./constants.ts";
+import { cn } from "../lib/utils.ts";
+import type { DrawingLine } from "../pages/trading/constants.ts";
 
 const TYPE_META: Record<string, { icon: LucideIcon; label: string }> = {
   trendline: { icon: TrendingUp, label: "Trendline" },

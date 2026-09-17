@@ -1,7 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════════
-// chartReplayMarkers.ts — Replay trade-event marker builders
-// ═════════════════════════════════════════════════════════════════════════════
-//
 // PURPOSE
 // -------
 // During session replay the chart overlays a marker at the candle where each

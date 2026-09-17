@@ -1,21 +1,11 @@
+import { ChartPreferences, TEMPLATE_PREF_KEYS, useChartPreferences, updateChartPreferences } from "@/hooks/useChartPreferences";
+import { IndicatorType } from "@/lib/indicators";
+import { cn } from "@/lib/utils";
+import { ChartTemplateContent, chartTemplatesApi, ChartTemplate } from "@/services/api/chart-templates";
+import { toast } from "@/services/toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, CloudUpload, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  type ChartPreferences,
-  TEMPLATE_PREF_KEYS,
-  updateChartPreferences,
-  useChartPreferences,
-} from "../../hooks/useChartPreferences.ts";
-import type { IndicatorType } from "../../lib/indicators.ts";
-import { cn } from "../../lib/utils.ts";
-import {
-  type ChartTemplate,
-  type ChartTemplateContent,
-  chartTemplatesApi,
-} from "../../services/api/chart-templates.ts";
-import { toast } from "../../services/toast.ts";
-
 // ── Chart templates (TradingView/TradeLocker-style layout templates) ─────────
 // Save/load named snapshots of chart appearance (colors, element visibility,
 // challenge overlays), active indicators and plugins. Stored server-side via
