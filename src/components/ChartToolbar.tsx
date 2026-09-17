@@ -78,7 +78,6 @@ export interface ChartToolbarProps {
   onClearDrawings: () => void;
   rightPanel: string;
   onRightPanel: (p: "order" | "dom" | "watchlist" | "news" | "ai-trader" | "tv-analysis") => void;
-  aiTraderEnabled?: boolean;
   showRightPanel: boolean;
   onToggleRightPanel: () => void;
   tick?: { bid: number; ask: number; timestamp: number };
@@ -128,7 +127,6 @@ export function ChartToolbar({
   onToggleRightPanel,
   tick,
   symbolInfo,
-  aiTraderEnabled,
   isReplaying = false,
   replayAccountId,
   activePlugins = [],
@@ -422,14 +420,6 @@ export function ChartToolbar({
           active={showRightPanel && rightPanel === "tv-analysis"}
           onClick={() => onRightPanel("tv-analysis")}
         />
-        {aiTraderEnabled && (
-          <ToolButton
-            icon={Bot}
-            tooltip="AI Trader"
-            active={showRightPanel && rightPanel === "ai-trader"}
-            onClick={() => onRightPanel("ai-trader")}
-          />
-        )}
         <div className="h-4 border-l border-border mx-1" />
         <button
           onClick={onToggleRightPanel}

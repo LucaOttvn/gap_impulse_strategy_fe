@@ -21,7 +21,6 @@ import { posthog } from "../lib/posthog";
 import type { CreateJournalEntryInput, UpdateJournalEntryInput } from "../services/api/journal.ts";
 import { api } from "../services/api.ts";
 import {
-  useAiTraderEnabled,
   useCandles,
   useCreateJournalEntry,
   useDeleteJournalEntry,
@@ -144,7 +143,6 @@ export function TradingPage() {
   const [bottomTab, setBottomTab] = useState<
     "positions" | "orders" | "history" | "journal" | "calendar" | "news" | "ai-trader"
   >("positions");
-  const { data: aiTraderEnabled } = useAiTraderEnabled();
   const [rightPanel, setRightPanel] = useState<
     "order" | "dom" | "watchlist" | "news" | "ai-trader" | "tv-analysis"
   >("order");
@@ -441,7 +439,6 @@ export function TradingPage() {
         onToggleRightPanel={() => setShowRightPanel((v) => !v)}
         tick={tick}
         symbolInfo={symbolInfo}
-        aiTraderEnabled={aiTraderEnabled?.enabled ?? false}
         isReplaying={isReplaying}
         replayAccountId={activeAccountId}
         activePlugins={activePlugins}
@@ -525,7 +522,6 @@ export function TradingPage() {
             onModifyOrder={setModifyingOrder}
             onSelectPositionSymbol={setSelectedSymbol}
             onSelectOrderSymbol={setSelectedSymbol}
-            aiTraderEnabled={aiTraderEnabled?.enabled ?? false}
             height={bottomPanelHeight}
             isFeedConnected={isFeedConnected}
             journalEntries={journalData?.entries || []}

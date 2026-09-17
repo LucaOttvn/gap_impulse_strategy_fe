@@ -53,7 +53,6 @@ export interface BottomPanelProps {
   onCreateJournal: (data: CreateJournalEntryInput) => void;
   onUpdateJournal: (id: string, data: UpdateJournalEntryInput) => void;
   onDeleteJournal: (id: string) => void;
-  aiTraderEnabled?: boolean;
   height?: number;
   isFeedConnected?: boolean;
 }
@@ -73,7 +72,6 @@ export function BottomPanel({
   onCreateJournal,
   onUpdateJournal,
   onDeleteJournal,
-  aiTraderEnabled,
   height = 220,
   isFeedConnected = true,
 }: BottomPanelProps) {
@@ -185,8 +183,7 @@ export function BottomPanel({
     { key: "history", label: "Trade History", icon: History },
     // { key: "journal", label: "Journal", icon: BookOpen }, // hidden pending QA (PS-285)
     { key: "calendar", label: "Calendar", icon: Globe },
-    { key: "news", label: "News", icon: Newspaper },
-    ...(aiTraderEnabled ? [{ key: "ai-trader" as const, label: "AI Trader", icon: Bot }] : []),
+    { key: "news", label: "News", icon: Newspaper }
   ];
 
   return (
