@@ -14,10 +14,6 @@ import { dayKey } from "./dayStarts";
 import { StepLinePrimitive } from "./primitives/stepLine";
 
 // ── Day levels ─────────────────────────────────────────────
-// One entry per calendar day (in the target timezone), holding
-// the running high/low as step points so the rendered line
-// mimics the Pine `var` pattern: flat until a new extreme is
-// made, then a step to the new level.
 export interface DayLevelPoints {
     startTime: number;
     endTime: number;
@@ -25,9 +21,63 @@ export interface DayLevelPoints {
     lowPoints: { time: number; value: number }[];
 }
 
+/** Given a fully-computed day, return the timestamp to stop drawing at. */
+export type StopTimeResolver = (day: DayLevelPoints) => number | undefined;
+
+export interface DayLevelsOptions {
+    timeZone?: string;
+    highColor?: string;
+    lowColor?: string;
+    lineWidth?: number;
+    lineStyle?: "solid" | "dashed" | "dotted";
+    /**
+     * When to stop drawing the levels.
+     *
+     * - `undefined` (default): draw to the last candle of the day.
+     * - `number`: a single timestamp applied to every day. It is clamped
+     *   to `[day.startTime, day.endTime]`, so days entirely before the
+     *   timestamp are unaffected and days entirely after it collapse to
+     *   their first bar.
+     * - `(day) => number | undefined`: per-day decision. Return
+     *   `undefined` to fall back to the default (end of day).
+     */
+    stopTime?: number | StopTimeResolver;
+}
+
+/**
+ * Truncate a step-point series at `stopAt` and append a carried-forward
+ * point so the rendered line always ends exactly at `stopAt`.
+ */
+function truncateTo(
+    points: { time: number; value: number }[],
+    stopAt: number,
+): { time: number; value: number }[] {
+    if (points.length === 0) return points;
+
+    const result: { time: number; value: number }[] = [];
+    let lastValue = points[0]!.value;
+
+    for (const p of points) {
+        if (p.time > stopAt) break;
+        result.push(p);
+        lastValue = p.value;
+    }
+
+    if (result.length === 0) {
+        // stopAt fell before the first point; emit a single carried value.
+        result.push({ time: stopAt, value: lastValue });
+    } else if (result[result.length - 1]!.time < stopAt) {
+        // Extend flat from the last extreme to the stop time.
+        result.push({ time: stopAt, value: lastValue });
+    }
+
+    return result;
+}
+
 function computeDayLevelPoints(
     candles: Candle[],
     timeZone: string,
+    resolveStopTime?: StopTimeResolver,
 ): DayLevelPoints[] {
     if (candles.length === 0) return [];
 
@@ -43,19 +93,28 @@ function computeDayLevelPoints(
     const flush = () => {
         if (key === "") return;
 
-        // Extend the line to the end of the day with the final running
-        // value, so the level visually persists until the last bar.
-        const lastHigh = highPoints[highPoints.length - 1]!;
-        if (lastHigh.time !== endTime) {
-            highPoints.push({ time: endTime, value: lastHigh.value });
+        // Full, untruncated day — this is what the resolver sees, so it
+        // can inspect the entire day's evolution before deciding.
+        const day: DayLevelPoints = {
+            startTime,
+            endTime,
+            highPoints,
+            lowPoints,
+        };
+
+        const requested = resolveStopTime?.(day);
+        const stopAt =
+            requested === undefined
+                ? endTime
+                : Math.max(startTime, Math.min(endTime, requested));
+
+        if (stopAt !== endTime) {
+            day.endTime = stopAt;
+            day.highPoints = truncateTo(highPoints, stopAt);
+            day.lowPoints = truncateTo(lowPoints, stopAt);
         }
 
-        const lastLow = lowPoints[lowPoints.length - 1]!;
-        if (lastLow.time !== endTime) {
-            lowPoints.push({ time: endTime, value: lastLow.value });
-        }
-
-        out.push({ startTime, endTime, highPoints, lowPoints });
+        out.push(day);
     };
 
     for (const c of candles) {
@@ -75,13 +134,11 @@ function computeDayLevelPoints(
             endTime = c.time;
 
             if (c.high > high) {
-                // Step: hold old level until this bar, then jump up.
                 highPoints.push({ time: c.time, value: high });
                 high = c.high;
                 highPoints.push({ time: c.time, value: high });
             }
             if (c.low < low) {
-                // Step: hold old level until this bar, then jump down.
                 lowPoints.push({ time: c.time, value: low });
                 low = c.low;
                 lowPoints.push({ time: c.time, value: low });
@@ -103,13 +160,7 @@ export function drawDayLevels(
         DeepPartial<CandlestickStyleOptions & SeriesOptionsCommon>
     >,
     candles: Candle[],
-    options?: {
-        timeZone?: string;
-        highColor?: string;
-        lowColor?: string;
-        lineWidth?: number;
-        lineStyle?: "solid" | "dashed" | "dotted";
-    },
+    options?: DayLevelsOptions,
 ): ISeriesPrimitive<Time>[] {
     const timeZone = options?.timeZone ?? "America/New_York";
     const highColor = options?.highColor ?? "#ffffff";
@@ -117,13 +168,18 @@ export function drawDayLevels(
     const lineWidth = options?.lineWidth ?? 2;
     const lineStyle = options?.lineStyle ?? "solid";
 
-    const days = computeDayLevelPoints(candles, timeZone);
+    const stopOpt = options?.stopTime;
+    const resolveStopTime: StopTimeResolver | undefined =
+        typeof stopOpt === "function"
+            ? stopOpt
+            : typeof stopOpt === "number"
+              ? () => stopOpt
+              : undefined;
+
+    const days = computeDayLevelPoints(candles, timeZone, resolveStopTime);
     const primitives: ISeriesPrimitive<Time>[] = [];
 
     for (const day of days) {
-        // A single point can't form a line, so skip days with < 2 samples.
-        // (Can only happen if a day has exactly one candle and no new
-        // extreme is set — practically impossible but safe to guard.)
         if (day.highPoints.length >= 2) {
             const highPrimitive = new StepLinePrimitive(
                 day.highPoints.map((p) => ({
@@ -133,7 +189,6 @@ export function drawDayLevels(
                 highColor,
                 lineWidth,
                 lineStyle,
-
             );
             candleSeries.attachPrimitive(highPrimitive);
             primitives.push(highPrimitive);
@@ -155,4 +210,4 @@ export function drawDayLevels(
     }
 
     return primitives;
-}
+} 

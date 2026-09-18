@@ -759,16 +759,13 @@ export function ChartPanel({
       timeZone: "America/New_York",
       fill: "rgba(255, 200, 50, 0.10)",
     });
-    dayLevelsRef.current = drawDayLevels(series, allCandles, {
-      timeZone: "America/New_York",
-      highColor: "#ffffff",
-      lowColor: "#ffffff",
-      lineWidth: 2,
-    });
+    // dayLevelsRef.current = drawDayLevels(series, allCandles, {
+    //   timeZone: "America/New_York",
+    //   highColor: "#ffffff",
+    //   lowColor: "#ffffff",
+    //   lineWidth: 2,
+    // });
   }, [allCandles, chartEpoch]);
-
-  // Primitive detach/rebuild for the strategy layers is handled by the shared
-  // `detachPrimitiveArrays` helper from ./chartPlugins.ts (see call above).
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
