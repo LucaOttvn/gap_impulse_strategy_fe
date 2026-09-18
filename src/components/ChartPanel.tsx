@@ -78,6 +78,7 @@ import { candleToLegend, type OhlcvLegend } from "../pages/trading/chartTypes.ts
 import { useChallengeLevels } from "../pages/trading/useChallengeLevels.ts";
 import { useIndicators } from "../pages/trading/useIndicators.ts";
 import { useNewsOverlay } from "../pages/trading/useNewsOverlay.ts";
+import { usePriceWheelZoom } from "../pages/trading/usePriceWheelZoom.ts";
 import { useSlTpDrag } from "../pages/trading/useSlTpDrag.ts";
 import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHud.tsx";
 import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
@@ -374,6 +375,10 @@ export function ChartPanel({
   const {newsConfig, setNewsConfig, showNewsConfigDialog, setShowNewsConfigDialog, newsPopup, setNewsPopup} = useNewsOverlay(containerRef, chartRef, selectedSymbol, isDark, chartData);
 
   const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
+
+  // TradingView-style: plain vertical wheel over the bars stretches them
+  // vertically (cursor-anchored price zoom); time zoom stays on pinch/Ctrl+wheel.
+  usePriceWheelZoom(containerRef, chartRef, candleSeriesRef, chartEpoch);
 
   // ── Challenge-aware rule levels (daily loss / max DD / profit target) ──
   const challengeFlags = useMemo(
