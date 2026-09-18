@@ -2,64 +2,98 @@ import {
     CandlestickData,
     CandlestickSeriesOptions,
     CandlestickStyleOptions,
-    DeepPartial, ISeriesApi,
-    ISeriesPrimitive, SeriesOptionsCommon,
+    DeepPartial,
+    ISeriesApi,
+    ISeriesPrimitive,
+    SeriesOptionsCommon,
     Time,
-    WhitespaceData
+    WhitespaceData,
 } from "lightweight-charts";
 import { Candle } from "../schemas";
-import { HorizontalSegmentPrimitive } from "./primitives";
 import { dayKey } from "./dayStarts";
+import { StepLinePrimitive } from "./primitives/stepLine";
 
 // ── Day levels ─────────────────────────────────────────────
-// Running high/low of each calendar day, in the target timezone.
-// Mirrors the Pine `var` pattern: reset on the first bar of the day,
-// extend with every subsequent bar.
-export interface DayLevels {
+// One entry per calendar day (in the target timezone), holding
+// the running high/low as step points so the rendered line
+// mimics the Pine `var` pattern: flat until a new extreme is
+// made, then a step to the new level.
+export interface DayLevelPoints {
     startTime: number;
     endTime: number;
-    dayHigh: number;
-    dayLow: number;
+    highPoints: { time: number; value: number }[];
+    lowPoints: { time: number; value: number }[];
 }
 
-function computeDayLevels(candles: Candle[], timeZone: string): DayLevels[] {
+function computeDayLevelPoints(
+    candles: Candle[],
+    timeZone: string,
+): DayLevelPoints[] {
     if (candles.length === 0) return [];
 
-    const out: DayLevels[] = [];
+    const out: DayLevelPoints[] = [];
     let key = "";
     let startTime = candles[0]!.time;
     let endTime = candles[0]!.time;
     let high = -Infinity;
     let low = Infinity;
+    let highPoints: { time: number; value: number }[] = [];
+    let lowPoints: { time: number; value: number }[] = [];
+
+    const flush = () => {
+        if (key === "") return;
+
+        // Extend the line to the end of the day with the final running
+        // value, so the level visually persists until the last bar.
+        const lastHigh = highPoints[highPoints.length - 1]!;
+        if (lastHigh.time !== endTime) {
+            highPoints.push({ time: endTime, value: lastHigh.value });
+        }
+
+        const lastLow = lowPoints[lowPoints.length - 1]!;
+        if (lastLow.time !== endTime) {
+            lowPoints.push({ time: endTime, value: lastLow.value });
+        }
+
+        out.push({ startTime, endTime, highPoints, lowPoints });
+    };
 
     for (const c of candles) {
         const k = dayKey(c.time, timeZone);
+
         if (k !== key) {
-            // Flush previous day before starting a new one
-            if (key !== "") {
-                out.push({ startTime, endTime, dayHigh: high, dayLow: low });
-            }
+            flush();
+
             key = k;
             startTime = c.time;
             endTime = c.time;
             high = c.high;
             low = c.low;
+            highPoints = [{ time: c.time, value: high }];
+            lowPoints = [{ time: c.time, value: low }];
         } else {
             endTime = c.time;
-            if (c.high > high) high = c.high;
-            if (c.low < low) low = c.low;
+
+            if (c.high > high) {
+                // Step: hold old level until this bar, then jump up.
+                highPoints.push({ time: c.time, value: high });
+                high = c.high;
+                highPoints.push({ time: c.time, value: high });
+            }
+            if (c.low < low) {
+                // Step: hold old level until this bar, then jump down.
+                lowPoints.push({ time: c.time, value: low });
+                low = c.low;
+                lowPoints.push({ time: c.time, value: low });
+            }
         }
     }
 
-    // Flush the last (possibly still running) day
-    if (key !== "") {
-        out.push({ startTime, endTime, dayHigh: high, dayLow: low });
-    }
-
+    flush();
     return out;
 }
 
-// ── Public entry point: day high / low lines ───────────────
+// ── Public entry point: day high / low step lines ──────────
 export function drawDayLevels(
     candleSeries: ISeriesApi<
         "Candlestick",
@@ -83,31 +117,41 @@ export function drawDayLevels(
     const lineWidth = options?.lineWidth ?? 2;
     const lineStyle = options?.lineStyle ?? "solid";
 
-    const days = computeDayLevels(candles, timeZone);
+    const days = computeDayLevelPoints(candles, timeZone);
     const primitives: ISeriesPrimitive<Time>[] = [];
 
-    for (const d of days) {
-        const highLine = new HorizontalSegmentPrimitive(
-            d.startTime as Time,
-            d.endTime as Time,
-            d.dayHigh,
-            highColor,
-            lineWidth,
-            lineStyle,
-        );
-        candleSeries.attachPrimitive(highLine);
-        primitives.push(highLine);
+    for (const day of days) {
+        // A single point can't form a line, so skip days with < 2 samples.
+        // (Can only happen if a day has exactly one candle and no new
+        // extreme is set — practically impossible but safe to guard.)
+        if (day.highPoints.length >= 2) {
+            const highPrimitive = new StepLinePrimitive(
+                day.highPoints.map((p) => ({
+                    time: p.time as Time,
+                    value: p.value,
+                })),
+                highColor,
+                lineWidth,
+                lineStyle,
 
-        const lowLine = new HorizontalSegmentPrimitive(
-            d.startTime as Time,
-            d.endTime as Time,
-            d.dayLow,
-            lowColor,
-            lineWidth,
-            lineStyle,
-        );
-        candleSeries.attachPrimitive(lowLine);
-        primitives.push(lowLine);
+            );
+            candleSeries.attachPrimitive(highPrimitive);
+            primitives.push(highPrimitive);
+        }
+
+        if (day.lowPoints.length >= 2) {
+            const lowPrimitive = new StepLinePrimitive(
+                day.lowPoints.map((p) => ({
+                    time: p.time as Time,
+                    value: p.value,
+                })),
+                lowColor,
+                lineWidth,
+                lineStyle,
+            );
+            candleSeries.attachPrimitive(lowPrimitive);
+            primitives.push(lowPrimitive);
+        }
     }
 
     return primitives;
