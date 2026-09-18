@@ -289,22 +289,27 @@ export function ChartPanel({
   const onDrawingToolSelectRef = useRef(onDrawingToolSelect);
   const onUndoDrawingRef = useRef(onUndoDrawing);
   const onRedoDrawingRef = useRef(onRedoDrawing);
+  
   useEffect(() => {
     drawingToolRef.current = drawingTool;
     drawingManagerRef.current?.setTool(drawingTool);
   }, [drawingTool]);
+
   useEffect(() => {
     drawingsRef.current = visibleDrawings;
     drawingManagerRef.current?.setDrawings(visibleDrawings);
   }, [visibleDrawings]);
+
   useEffect(() => {
     magnetRef.current = magnetMode;
     drawingManagerRef.current?.setMagnetMode(magnetMode);
   }, [magnetMode]);
+
   useEffect(() => {
     accountEquityRef.current = accountEquity;
     drawingManagerRef.current?.setAccountEquity(accountEquity);
   }, [accountEquity]);
+
   useEffect(() => {
     const refresh = () => {
       styleDefaultsRef.current = getStyleDefaults();
@@ -313,10 +318,12 @@ export function ChartPanel({
     window.addEventListener(DRAWING_STYLES_EVENT, refresh);
     return () => window.removeEventListener(DRAWING_STYLES_EVENT, refresh);
   }, []);
+
   useEffect(() => {
     stayInModeRef.current = stayInDrawingMode;
     drawingManagerRef.current?.setStayInDrawingMode(stayInDrawingMode);
   }, [stayInDrawingMode]);
+
   useEffect(() => {
     onAddDrawingRef.current = onAddDrawing;
     onUpdateDrawingRef.current = onUpdateDrawing;
@@ -405,7 +412,7 @@ export function ChartPanel({
     const chart = chartRef.current;
     if (!chart) return;
     chart.timeScale().resetTimeScale();
-    chart.priceScale("right").applyOptions({autoScale: true});
+    chart.priceScale("right").applyOptions({autoScale: false});
     chart.timeScale().scrollToRealTime();
   }, []);
 
@@ -777,7 +784,6 @@ export function ChartPanel({
           });
         },
       },
-
       localization: {
         timeFormatter: (time: any) => {
           // `time` here is the *shifted* UTC timestamp, so just format as UTC.
@@ -864,6 +870,11 @@ export function ChartPanel({
     lastLoadKeyRef.current = loadKey;
     liveCandleTsRef.current = 0;
     replayBufferedLive(buffered, chartData, ctx);
+
+    // the chart needs autoscale: true at the start to center the bars but as soon as it's loaded, we disabled it to enable the free panning gesture
+    if (chartRef.current) {
+      chartRef.current.priceScale("right").applyOptions({autoScale: false});
+    }
     return scheduleStaleRefetch(chartData, ctx);
   }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx]);
 
