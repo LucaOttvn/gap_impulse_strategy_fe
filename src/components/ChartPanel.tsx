@@ -65,7 +65,6 @@ import { toast } from "../services/toast.ts";
 import { CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe } from "../pages/trading/constants.ts";
 import { ChartContextMenu } from "./ChartContextMenu.tsx";
 import { DRAWING_STYLES_EVENT, getStyleDefaults } from "../pages/trading/drawingStyles.ts";
-import { drawDayLevels } from "@/services/utils/dayLevels.ts";
 import { formatCountdown, getMinMove } from "../pages/trading/utils.ts";
 import { useChartData } from "../pages/trading/chartData.ts";
 import { makeHistoryLoader, type LoadMoreState } from "../pages/trading/chartHistoryLoader.ts";
@@ -85,7 +84,7 @@ import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
 import { DrawingToolRail } from "./DrawingToolRail.tsx";
 import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
 import { NewsOverlay } from "./NewsOverlay.tsx";
-import { drawGapsImpulseStrategy } from "@/services/utils/gaps.ts";
+import { drawGapsImpulseStrategy } from "@/services/utils/strategy.ts";
 import { highlightOpenWindow } from "@/services/utils/openWindow.ts";
 
 // ── Props ────────────────────────────────────────────────────
