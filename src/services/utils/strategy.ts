@@ -2,6 +2,7 @@ import { ISeriesApi, Time, ISeriesPrimitive } from "lightweight-charts";
 import { Candle } from "../schemas";
 import { createPlotLine } from "./plotLine";
 import { handleGap } from "./gapsHandler";
+import { createEMAHandler, EMAHandler } from "./EMAHandler";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
@@ -31,6 +32,8 @@ export function drawGapsImpulseStrategy(
 
     let dayHighLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
     let dayLowLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
+    const emaLine = createPlotLine(candleSeries, { color: "#a855f7", mode: "line" })
+    const computeEma = createEMAHandler(emaPeriod);
 
     // Running extremes for the current day. Seeded on the first candle
     // of each day, then updated as new extremes are made. We use
@@ -55,13 +58,6 @@ export function drawGapsImpulseStrategy(
     let fib618: ReturnType<typeof createPlotLine> | null = null;
     let fib786: ReturnType<typeof createPlotLine> | null = null;
 
-    // ── EMA state ───────────────────────────────────────────
-    // `EMA_K` is the smoothing constant: 2 / (period + 1).
-    const EMA_K = 2 / (emaPeriod + 1);
-    const emaLine = createPlotLine(candleSeries, { color: "#a855f7", mode: "line" })
-    let emaValue: number | null = null; // null until the seed is ready
-    let emaSeedSum = 0;
-    let emaSeedCount = 0;
 
     // Flush every open handle at the end of a day (or the series).
     // `finish()` is what actually attaches the accumulated segment to
@@ -114,23 +110,10 @@ export function drawGapsImpulseStrategy(
         }
 
         // ── EMA update ──────────────────────────────────────
-        if (emaLine) {
-            if (emaValue === null) {
-                // Warm-up phase: accumulate closes until we have enough
-                // for the initial SMA. No point is emitted during this
-                // phase, so the line simply starts on bar `emaPeriod`.
-                emaSeedSum += first.close;
-                emaSeedCount += 1;
-                if (emaSeedCount === emaPeriod) {
-                    emaValue = emaSeedSum / emaPeriod;
-                    emaLine.add(first.time, emaValue);
-                }
-            } else {
-                // Steady state: standard exponential smoothing.
-                emaValue = first.close * EMA_K + emaValue * (1 - EMA_K);
-                emaLine.add(first.time, emaValue);
-            }
-        }
+
+        const newEmaValue = computeEma(first);
+        if (newEmaValue !== null) emaLine.add(first.time, newEmaValue);
+
 
         // ── Gap detection ───────────────────────────────────
 

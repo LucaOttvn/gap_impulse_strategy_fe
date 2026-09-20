@@ -1,4 +1,5 @@
 import { Candle } from "../schemas";
+import { PlotLineHandle } from "./plotLine";
 
 // ── Day-start helpers ──────────────────────────────────────
 export function dayKey(unixSeconds: number, timeZone: string): string {
