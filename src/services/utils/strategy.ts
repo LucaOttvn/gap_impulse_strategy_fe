@@ -7,6 +7,7 @@ import { dayKey } from "./dayStarts";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
+export const MIN_GAP_SIZE = 0
 
 // ── Public options ────────────────────────────────────────
 // Everything configurable about the strategy lives here. Callers pass
@@ -126,8 +127,7 @@ export function drawGapsImpulseStrategy(
         if (newEmaValue !== null) emaLine.add(first.time, newEmaValue);
 
         // ── Gap detection ───────────────────────────────────
-        let newGap: Gap | null = null;
-        newGap = handleGap(first, third, currentDayStart.time, candleSeries, primitives);
+        let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow, MIN_GAP_SIZE);
 
         // First gap of the day? Lock the direction and create
         // the two bullish handles. If `activeFib` is already
@@ -153,11 +153,11 @@ export function drawGapsImpulseStrategy(
 
         if (activeFib) {
             if (activeFib.direction === "bullish" && activeFib.fib618 && activeFib.fib786) {
-                activeFib.fib618.add(first.time, runningLow + height * 0.618);
-                activeFib.fib786.add(first.time, runningLow + height * 0.786);
+                activeFib.fib618.add(third.time, runningLow + height * 0.618);
+                activeFib.fib786.add(third.time, runningLow + height * 0.786);
             } else if (activeFib.direction === "bearish" && activeFib.fib618 && activeFib.fib786) {
-                activeFib.fib618.add(first.time, runningHigh - height * 0.618);
-                activeFib.fib786.add(first.time, runningHigh - height * 0.786);
+                activeFib.fib618.add(third.time, runningHigh - height * 0.618);
+                activeFib.fib786.add(third.time, runningHigh - height * 0.786);
             }
         }
     }

@@ -19,6 +19,9 @@ export function handleGap(
     currentDayStartTime: number,
     candleSeries: ISeriesApi<"Candlestick">,
     primitives: ISeriesPrimitive<Time>[],
+    dayHigh: number,
+    dayLow: number,
+    minGapSize: number
 ): Gap | null {
 
     // Reject gaps whose third candle is still inside the opening
@@ -31,7 +34,14 @@ export function handleGap(
     const isBullishGap = firstCandle.high < thirdCandle.low;
     const isBearishGap = firstCandle.low > thirdCandle.high;
 
+    const dayHighPassed = thirdCandle.high > dayHigh;
+    const dayLowPassed = thirdCandle.low < dayLow;
+
     if (isBullishGap) {
+
+        // if the gap is smaller than the minimum size, we don't consider it a valid gap and return null
+        if (thirdCandle.low - firstCandle.high < minGapSize) return null;
+
         const newGap: Gap = {
             startTime: firstCandle.time,
             endTime: thirdCandle.time,
@@ -41,13 +51,13 @@ export function handleGap(
         }
         // Gap rectangles are ALWAYS drawn, regardless of the
         // fib lock. Only fib activation is gated by it.
-        drawGap(
-            newGap,
-            candleSeries,
-            primitives,
-        );
-        return newGap;
+        drawGap(newGap, candleSeries, primitives,);
+        if (dayHighPassed) return newGap;
+        return null;
     } else if (isBearishGap) {
+
+        if (firstCandle.low - thirdCandle.high < minGapSize) return null;
+
         const newGap: Gap = {
             startTime: firstCandle.time,
             endTime: thirdCandle.time,
@@ -55,12 +65,9 @@ export function handleGap(
             bottomPrice: thirdCandle.high,
             direction: "bearish",
         }
-        drawGap(
-            newGap,
-            candleSeries,
-            primitives,
-        );
-        return newGap;
+        drawGap(newGap, candleSeries, primitives,);
+        if (dayLowPassed) return newGap;
+        return null;
     }
     return null;
 }
