@@ -1,8 +1,9 @@
 import { ISeriesApi, Time, ISeriesPrimitive } from "lightweight-charts";
 import { Candle } from "../schemas";
-import { createPlotLine } from "./plotLine";
-import { handleGap } from "./gapsHandler";
-import { createEMAHandler, EMAHandler } from "./EMAHandler";
+import { createPlotLine, PlotLineHandle } from "./plotLine";
+import { Direction, Gap, handleGap } from "./gapsHandler";
+import { createEMAHandler } from "./EMAHandler";
+import { dayKey } from "./dayStarts";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
@@ -13,6 +14,11 @@ export const OPENING_WINDOW_SEC = 15 * 60;
 export interface GapsImpulseStrategyOptions {
     /** EMA period. Default 21. */
     emaPeriod?: number;
+}
+export interface Fibonacci {
+    fib618: PlotLineHandle;
+    fib786: PlotLineHandle;
+    direction: Direction
 }
 
 /**
@@ -41,7 +47,10 @@ export function drawGapsImpulseStrategy(
     // always sets them, regardless of price scale.
     let runningHigh = -Infinity;
     let runningLow = Infinity;
-    let currentDayStart: number | null = null;
+    let currentDayStart: {
+        time: number
+        dateKey: string
+    } | null = null;
 
     // ── Fibonacci lines (one direction per day) ─────────────
     // The first valid gap of the day decides the direction
@@ -53,10 +62,9 @@ export function drawGapsImpulseStrategy(
     // The handles start as `null` because they must only exist once
     // a gap has been detected. Before that, no fib line should be
     // drawn at all.
-    type FibDirection = "bullish" | "bearish";
-    let activeFib: FibDirection | null = null;
-    let fib618: ReturnType<typeof createPlotLine> | null = null;
-    let fib786: ReturnType<typeof createPlotLine> | null = null;
+    let activeFib: Fibonacci | null = null;
+    // let fib618: PlotLineHandle | null = null;
+    // let fib786: PlotLineHandle | null = null;
 
 
     // Flush every open handle at the end of a day (or the series).
@@ -66,8 +74,10 @@ export function drawGapsImpulseStrategy(
     const finishDay = () => {
         primitives.push(...dayHighLine.finish());
         primitives.push(...dayLowLine.finish());
-        if (fib618) primitives.push(...fib618.finish());
-        if (fib786) primitives.push(...fib786.finish());
+        if (activeFib) {
+            primitives.push(...activeFib.fib618.finish());
+            primitives.push(...activeFib.fib786.finish());
+        }
     };
 
     // ── Main loop ───────────────────────────────────────────
@@ -75,15 +85,19 @@ export function drawGapsImpulseStrategy(
         const first = candles[i];
         const third = candles[i + 2];
 
-        if (!first) continue;
+        if (!first || !third) continue;
 
-        const today = new Date(first.time).getDay();
+        const todayKey = dayKey(first.time, "America/New_York");
 
-        // Detect day change
-        if (today !== currentDayStart) {
+        // currentDayStart === null => detect first candle ever
+        // todayKey !== currentDayStart.dateKey => detect day change
+        if (currentDayStart === null || todayKey !== currentDayStart.dateKey) {
             // Close out yesterday's lines, if any.
             if (currentDayStart !== null) finishDay();
-            currentDayStart = today
+            currentDayStart = {
+                time: first.time,
+                dateKey: todayKey
+            };
 
             // Fresh handles for the new day. The old ones have already
             // been `finish()`ed, so they're now inert and can be dropped.
@@ -99,8 +113,6 @@ export function drawGapsImpulseStrategy(
             // Reset the fib lock. Whichever gap we detect next — bullish
             // or bearish — will claim the direction for the whole day.
             activeFib = null;
-            fib618 = null;
-            fib786 = null;
         } else {
             // Not a new day: extend the running extremes if this candle
             // broke them. This is what makes the day-high/low lines
@@ -110,41 +122,43 @@ export function drawGapsImpulseStrategy(
         }
 
         // ── EMA update ──────────────────────────────────────
-
         const newEmaValue = computeEma(first);
         if (newEmaValue !== null) emaLine.add(first.time, newEmaValue);
 
-
         // ── Gap detection ───────────────────────────────────
+        let newGap: Gap | null = null;
+        newGap = handleGap(first, third, currentDayStart.time, candleSeries, primitives);
 
-        if (third) handleGap(first, third, currentDayStart, candleSeries, primitives, activeFib, fib618, fib786);
-
+        // First gap of the day? Lock the direction and create
+        // the two bullish handles. If `activeFib` is already
+        // set (from an earlier gap today, either direction),
+        // this block is skipped entirely.
+        if (newGap && !activeFib) {
+            activeFib = {
+                fib618: createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" }),
+                fib786: createPlotLine(candleSeries, { color: "#22d3ee", mode: "step" }),
+                direction: newGap?.direction ?? "bullish"
+            };
+        }
 
         // ── Feed every plot ─────────────────────────────────
         // Even on candles where nothing interesting happened, every
         // open plot needs a data point. `mode: "step"` will detect
-        // whether the value changed and emit a hold-then-jump pair
-        // automatically — we don't need to special-case it here.
+        // whether the value changed and emit a hold-then-jump pair automatically
         const height = runningHigh - runningLow;
 
         dayHighLine.add(first.time, runningHigh);
         dayLowLine.add(first.time, runningLow);
 
-        // Fib lines only exist after a gap has activated them. Before
-        // that, `activeFib` is null and both handles are null, so this
-        // block silently does nothing.
-        //
-        // Note the fib levels are re-derived every candle from the
-        // *current* running extremes, not frozen at gap-detection time.
-        // This means they keep sliding as the day's high/low expand,
-        // which matches Pine's behavior when `dayHigh`/`dayLow` are
-        // declared with `var` and updated across the session.
-        if (activeFib === "bullish" && fib618 && fib786) {
-            fib618.add(first.time, runningLow + height * 0.618);
-            fib786.add(first.time, runningLow + height * 0.786);
-        } else if (activeFib === "bearish" && fib618 && fib786) {
-            fib618.add(first.time, runningHigh - height * 0.618);
-            fib786.add(first.time, runningHigh - height * 0.786);
+
+        if (activeFib) {
+            if (activeFib.direction === "bullish" && activeFib.fib618 && activeFib.fib786) {
+                activeFib.fib618.add(first.time, runningLow + height * 0.618);
+                activeFib.fib786.add(first.time, runningLow + height * 0.786);
+            } else if (activeFib.direction === "bearish" && activeFib.fib618 && activeFib.fib786) {
+                activeFib.fib618.add(first.time, runningHigh - height * 0.618);
+                activeFib.fib786.add(first.time, runningHigh - height * 0.786);
+            }
         }
     }
 

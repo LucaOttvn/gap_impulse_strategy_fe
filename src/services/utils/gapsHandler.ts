@@ -1,77 +1,68 @@
-
-// ── Gap model ──────────────────────────────────────────────
-// A "gap" is a price range that was skipped between two candles.
-// We store it as a rectangle in (time, price) space so the
-
 import { ISeriesApi, ISeriesPrimitive, Time } from "lightweight-charts";
 import { Candle } from "../schemas";
 import { OPENING_WINDOW_SEC } from "./strategy";
-import { createPlotLine } from "./plotLine";
 import { GapRectanglePrimitive } from "./primitives";
 
-// GapRectanglePrimitive can draw it directly on the chart.
+export type Direction = "bullish" | "bearish";
+
 export interface Gap {
     startTime: number; // unix seconds — left edge of the rectangle
     endTime: number;   // unix seconds — right edge of the rectangle
     topPrice: number;  // upper edge
     bottomPrice: number; // lower edge
-    direction: "bullish" | "bearish";
+    direction: Direction
 }
 
-export function handleGap(firstCandle: Candle, thirdCandle: Candle, currentDayStart: number, candleSeries: ISeriesApi<"Candlestick">, primitives: ISeriesPrimitive<Time>[], activeFib: "bullish" | "bearish" | null, fib618: ReturnType<typeof createPlotLine> | null, fib786: ReturnType<typeof createPlotLine> | null) {
+export function handleGap(
+    firstCandle: Candle,
+    thirdCandle: Candle,
+    currentDayStartTime: number,
+    candleSeries: ISeriesApi<"Candlestick">,
+    primitives: ISeriesPrimitive<Time>[],
+): Gap | null {
+
     // Reject gaps whose third candle is still inside the opening
     // window. Because candles are chronological, if the third is
     // in the window then so are the first two — one check covers all.
-    const pastOpeningWindow = thirdCandle.time >= currentDayStart + OPENING_WINDOW_SEC;
+    const pastOpeningWindow = thirdCandle.time >= currentDayStartTime + OPENING_WINDOW_SEC;
 
-    if (pastOpeningWindow) {
-        const isBullishGap = firstCandle.high < thirdCandle.low;
-        const isBearishGap = firstCandle.low > thirdCandle.high;
+    if (!pastOpeningWindow) return null;
 
-        if (isBullishGap) {
-            // Gap rectangles are ALWAYS drawn, regardless of the
-            // fib lock. Only fib activation is gated by it.
-            drawGap(
-                {
-                    startTime: firstCandle.time,
-                    endTime: thirdCandle.time,
-                    topPrice: thirdCandle.low,
-                    bottomPrice: firstCandle.high,
-                    direction: "bullish",
-                },
-                candleSeries,
-                primitives,
-            );
+    const isBullishGap = firstCandle.high < thirdCandle.low;
+    const isBearishGap = firstCandle.low > thirdCandle.high;
 
-            // First gap of the day? Lock the direction and create
-            // the two bullish handles. If `activeFib` is already
-            // set (from an earlier gap today, either direction),
-            // this block is skipped entirely.
-            if (!activeFib) {
-                activeFib = "bullish";
-                fib618 = createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" });
-                fib786 = createPlotLine(candleSeries, { color: "#22d3ee", mode: "step" });
-            }
-        } else if (isBearishGap) {
-            drawGap(
-                {
-                    startTime: firstCandle.time,
-                    endTime: thirdCandle.time,
-                    topPrice: firstCandle.low,
-                    bottomPrice: thirdCandle.high,
-                    direction: "bearish",
-                },
-                candleSeries,
-                primitives,
-            );
-
-            if (!activeFib) {
-                activeFib = "bearish";
-                fib618 = createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" });
-                fib786 = createPlotLine(candleSeries, { color: "#22d3ee", mode: "step" });
-            }
+    if (isBullishGap) {
+        const newGap: Gap = {
+            startTime: firstCandle.time,
+            endTime: thirdCandle.time,
+            topPrice: thirdCandle.low,
+            bottomPrice: firstCandle.high,
+            direction: "bullish",
         }
+        // Gap rectangles are ALWAYS drawn, regardless of the
+        // fib lock. Only fib activation is gated by it.
+        drawGap(
+            newGap,
+            candleSeries,
+            primitives,
+        );
+        return newGap;
+    } else if (isBearishGap) {
+        const newGap: Gap = {
+            startTime: firstCandle.time,
+            endTime: thirdCandle.time,
+            topPrice: firstCandle.low,
+            bottomPrice: thirdCandle.high,
+            direction: "bearish",
+        }
+        drawGap(
+            newGap,
+            candleSeries,
+            primitives,
+        );
+        return newGap;
     }
+    return null;
 }
 
 /**
