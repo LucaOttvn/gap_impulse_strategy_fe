@@ -215,7 +215,7 @@ export function drawGapsImpulseStrategy(
                                 price: activeFib.orangeLevel,
                                 lineName: "orange"
                             },
-                            direction: "bullish"
+                            direction: "bearish"
                         }
                         continue
                     }

@@ -47,14 +47,13 @@ export function handleGap(
 
     if (isBullishGap && dayHighPassed) {
 
-        const bullishGapMiddlePoint = (thirdCandle.high + firstCandle.low) / 2
-        const bullishGapMinSize = bullishGapMiddlePoint * 0.0005
+        const bullishGapMinSize = firstCandle.high * 0.0005
 
         if (thirdCandle.low - firstCandle.high < bullishGapMinSize) return null
 
-        const bullishThirdCandleMinSize = bullishGapMinSize * 0.001
+        const bullishThirdCandleMinSize = firstCandle.high * 0.001
 
-        if (thirdCandle.high - thirdCandle.low < bullishThirdCandleMinSize) return null
+        if (thirdCandle.close - thirdCandle.open < bullishThirdCandleMinSize) return null
 
         const newGap: Gap = {
             startTime: firstCandle.time,
@@ -68,14 +67,13 @@ export function handleGap(
         return newGap;
     } else if (isBearishGap && dayLowPassed) {
 
-        const bearishGapMiddlePoint = (firstCandle.high + thirdCandle.low) / 2
-        const bearishGapMinSize = bearishGapMiddlePoint * 0.0005
+        const bearishGapMinSize = firstCandle.low * 0.0005
 
         if (firstCandle.low - thirdCandle.high < bearishGapMinSize) return null
 
-        const bearishThirdCandleMinSize = bearishGapMinSize * 0.001
+        const bearishThirdCandleMinSize = firstCandle.low * 0.001
 
-        if (thirdCandle.high - thirdCandle.low < bearishThirdCandleMinSize) return null
+        if (thirdCandle.open - thirdCandle.close < bearishThirdCandleMinSize) return null
 
         const newGap: Gap = {
             startTime: firstCandle.time,
