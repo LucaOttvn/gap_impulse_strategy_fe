@@ -31,8 +31,17 @@ export function handleGap(
 
     if (!pastOpeningWindow) return null;
 
-    const isBullishGap = firstCandle.high < thirdCandle.low;
-    const isBearishGap = firstCandle.low > thirdCandle.high;
+    // The third candle must agree with the gap's direction:
+    //   - a bullish gap is valid only if the third candle is green
+    //     (close > open) — the market kept pushing up through the void
+    //   - a bearish gap is valid only if the third candle is red
+    //     (close < open) — the market kept pushing down through the void
+    // A doji (close === open) fails both and disqualifies the gap.
+    const isThirdBullish = thirdCandle.close > thirdCandle.open;
+    const isThirdBearish = thirdCandle.close < thirdCandle.open;
+
+    const isBullishGap = firstCandle.high < thirdCandle.low && isThirdBullish;
+    const isBearishGap = firstCandle.low > thirdCandle.high && isThirdBearish;
 
     const dayHighPassed = thirdCandle.high > dayHigh;
     const dayLowPassed = thirdCandle.low < dayLow;
@@ -49,8 +58,6 @@ export function handleGap(
             bottomPrice: firstCandle.high,
             direction: "bullish",
         }
-        // Gap rectangles are ALWAYS drawn, regardless of the
-        // fib lock. Only fib activation is gated by it.
         drawGap(newGap, candleSeries, primitives,);
 
         return newGap;
@@ -70,7 +77,6 @@ export function handleGap(
     }
     return null;
 }
-
 /**
  * Attaches one rectangle primitive per gap. Kept separate from the
  * main loop so the caller can decide when (and how) to draw gaps,
