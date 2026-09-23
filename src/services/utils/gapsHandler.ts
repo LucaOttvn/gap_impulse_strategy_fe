@@ -37,7 +37,7 @@ export function handleGap(
     const dayHighPassed = thirdCandle.high > dayHigh;
     const dayLowPassed = thirdCandle.low < dayLow;
 
-    if (isBullishGap) {
+    if (isBullishGap && dayHighPassed) {
 
         // if the gap is smaller than the minimum size, we don't consider it a valid gap and return null
         if (thirdCandle.low - firstCandle.high < minGapSize) return null;
@@ -52,9 +52,9 @@ export function handleGap(
         // Gap rectangles are ALWAYS drawn, regardless of the
         // fib lock. Only fib activation is gated by it.
         drawGap(newGap, candleSeries, primitives,);
-        if (dayHighPassed) return newGap;
-        return null;
-    } else if (isBearishGap) {
+
+        return newGap;
+    } else if (isBearishGap && dayLowPassed) {
 
         if (firstCandle.low - thirdCandle.high < minGapSize) return null;
 
@@ -66,8 +66,7 @@ export function handleGap(
             direction: "bearish",
         }
         drawGap(newGap, candleSeries, primitives,);
-        if (dayLowPassed) return newGap;
-        return null;
+        return newGap;
     }
     return null;
 }

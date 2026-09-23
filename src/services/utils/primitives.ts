@@ -9,10 +9,14 @@ import {
 export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
     private _chart: IChartApi | null = null;
     private _series: ISeriesApi<"Candlestick"> | null = null;
+    // requestUpdate is handed to us by the library in `attached()`.
+    // Only SeriesAttachedParameter has it — ISeriesApi does not — so
+    // we keep a reference to the callback itself.
+    private _requestUpdate: (() => void) | null = null;
 
     constructor(
         private readonly _startTime: Time,
-        private readonly _endTime: Time,
+        private _endTime: Time,
         private readonly _topPrice: number,
         private readonly _bottomPrice: number,
         private readonly _fill: string,
@@ -22,14 +26,26 @@ export class GapRectanglePrimitive implements ISeriesPrimitive<Time> {
     attached(param: SeriesAttachedParameter<Time>) {
         this._chart = param.chart;
         this._series = param.series as ISeriesApi<"Candlestick">;
+        this._requestUpdate = param.requestUpdate;
     }
 
     detached() {
         this._chart = null;
         this._series = null;
+        this._requestUpdate = null;
     }
 
     updateAllViews() { }
+
+    /**
+     * Advance the right edge of the rectangle and ask the chart to
+     * repaint. Called on every candle while a position is open, so the
+     * rectangle grows until TP/SL is hit or the day ends.
+     */
+    setEndTime(t: Time): void {
+        this._endTime = t;
+        this._requestUpdate?.();
+    }
 
     paneViews(): readonly IPrimitivePaneView[] {
         const self = this;
@@ -78,7 +94,7 @@ export class TimeRangeBandPrimitive implements ISeriesPrimitive<Time> {
         private readonly _startTime: Time,
         private readonly _endTime: Time,
         private readonly _fill: string,
-    ) {}
+    ) { }
 
     attached(param: SeriesAttachedParameter<Time>) {
         this._chart = param.chart;
@@ -88,7 +104,7 @@ export class TimeRangeBandPrimitive implements ISeriesPrimitive<Time> {
         this._chart = null;
     }
 
-    updateAllViews() {}
+    updateAllViews() { }
 
     paneViews(): readonly IPrimitivePaneView[] {
         const self = this;
@@ -131,7 +147,7 @@ export class HorizontalSegmentPrimitive implements ISeriesPrimitive<Time> {
         private readonly _color: string,
         private readonly _lineWidth: number = 2,
         private readonly _lineStyle: "solid" | "dashed" | "dotted" = "solid",
-    ) {}
+    ) { }
 
     attached(param: SeriesAttachedParameter<Time>) {
         this._chart = param.chart;
@@ -143,7 +159,7 @@ export class HorizontalSegmentPrimitive implements ISeriesPrimitive<Time> {
         this._series = null;
     }
 
-    updateAllViews() {}
+    updateAllViews() { }
 
     paneViews(): readonly IPrimitivePaneView[] {
         const self = this;

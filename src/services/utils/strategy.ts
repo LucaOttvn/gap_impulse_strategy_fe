@@ -4,6 +4,8 @@ import { createPlotLine, PlotLineHandle } from "./plotLine";
 import { Direction, Gap, handleGap } from "./gapsHandler";
 import { createEMAHandler } from "./EMAHandler";
 import { dayKey } from "./dayStarts";
+import { handleOperation, Operation } from "./positionHandler";
+import { LabelPrimitive } from "./primitives/label";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
@@ -17,9 +19,11 @@ export interface GapsImpulseStrategyOptions {
     emaPeriod?: number;
 }
 export interface Fibonacci {
-    fib618: PlotLineHandle;
-    fib786: PlotLineHandle;
-    direction: Direction
+    orangeLine: PlotLineHandle;
+    blueLine: PlotLineHandle;
+    direction: Direction;
+    orangeLevel: number
+    blueLevel: number
 }
 
 /**
@@ -41,6 +45,7 @@ export function drawGapsImpulseStrategy(
     let dayLowLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
     const emaLine = createPlotLine(candleSeries, { color: "#a855f7", mode: "line" })
     const computeEma = createEMAHandler(emaPeriod);
+    let currentOperation: Operation | undefined
 
     // Running extremes for the current day. Seeded on the first candle
     // of each day, then updated as new extremes are made. We use
@@ -64,9 +69,6 @@ export function drawGapsImpulseStrategy(
     // a gap has been detected. Before that, no fib line should be
     // drawn at all.
     let activeFib: Fibonacci | null = null;
-    // let fib618: PlotLineHandle | null = null;
-    // let fib786: PlotLineHandle | null = null;
-
 
     // Flush every open handle at the end of a day (or the series).
     // `finish()` is what actually attaches the accumulated segment to
@@ -76,8 +78,8 @@ export function drawGapsImpulseStrategy(
         primitives.push(...dayHighLine.finish());
         primitives.push(...dayLowLine.finish());
         if (activeFib) {
-            primitives.push(...activeFib.fib618.finish());
-            primitives.push(...activeFib.fib786.finish());
+            primitives.push(...activeFib.orangeLine.finish());
+            primitives.push(...activeFib.blueLine.finish());
         }
     };
 
@@ -114,6 +116,7 @@ export function drawGapsImpulseStrategy(
             // Reset the fib lock. Whichever gap we detect next — bullish
             // or bearish — will claim the direction for the whole day.
             activeFib = null;
+            currentOperation = undefined
         } else {
             // Not a new day: extend the running extremes if this candle
             // broke them. This is what makes the day-high/low lines
@@ -123,43 +126,97 @@ export function drawGapsImpulseStrategy(
         }
 
         // ── EMA update ──────────────────────────────────────
-        const newEmaValue = computeEma(first);
-        if (newEmaValue !== null) emaLine.add(first.time, newEmaValue);
+        const currentEMA = computeEma(first);
+        if (currentEMA !== null) emaLine.add(first.time, currentEMA);
 
         // ── Gap detection ───────────────────────────────────
         let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow, MIN_GAP_SIZE);
 
-        // First gap of the day? Lock the direction and create
-        // the two bullish handles. If `activeFib` is already
-        // set (from an earlier gap today, either direction),
-        // this block is skipped entirely.
+        // Handle first gap of the day
         if (newGap && !activeFib) {
             activeFib = {
-                fib618: createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" }),
-                fib786: createPlotLine(candleSeries, { color: "#22d3ee", mode: "step" }),
-                direction: newGap?.direction ?? "bullish"
+                orangeLine: createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" }),
+                blueLine: createPlotLine(candleSeries, { color: "#22d3ee", mode: "step" }),
+                direction: newGap?.direction ?? "bullish",
+                orangeLevel: 0,
+                blueLevel: 0
             };
         }
-
-        // ── Feed every plot ─────────────────────────────────
-        // Even on candles where nothing interesting happened, every
-        // open plot needs a data point. `mode: "step"` will detect
-        // whether the value changed and emit a hold-then-jump pair automatically
-        const height = runningHigh - runningLow;
 
         dayHighLine.add(first.time, runningHigh);
         dayLowLine.add(first.time, runningLow);
 
+        // --- OPERATION SECTION ---
+        if (activeFib === null) continue;
 
-        if (activeFib) {
-            if (activeFib.direction === "bullish" && activeFib.fib618 && activeFib.fib786) {
-                activeFib.fib618.add(third.time, runningLow + height * 0.618);
-                activeFib.fib786.add(third.time, runningLow + height * 0.786);
-            } else if (activeFib.direction === "bearish" && activeFib.fib618 && activeFib.fib786) {
-                activeFib.fib618.add(third.time, runningHigh - height * 0.618);
-                activeFib.fib786.add(third.time, runningHigh - height * 0.786);
-            }
+        const height = runningHigh - runningLow;
+
+        if (activeFib.direction === "bullish") {
+            activeFib.orangeLevel = runningLow + height * 0.618;
+            activeFib.blueLevel = runningLow + height * 0.786;
+        } else if (activeFib.direction === "bearish") {
+            activeFib.orangeLevel = runningHigh - height * 0.618;
+            activeFib.blueLevel = runningHigh - height * 0.786;
         }
+
+        activeFib.orangeLine.add(third.time, activeFib.orangeLevel);
+        activeFib.blueLine.add(third.time, activeFib.blueLevel);
+
+        // ── Entry trigger ───────────────────────────────────────
+        // If an operation hasn't been defined yet, start to set it
+        if (currentOperation === undefined) {
+            if (activeFib.direction === "bullish") {
+                // Detect blue line touch
+                if (third.low <= activeFib.blueLevel) {
+
+                    const label = new LabelPrimitive(
+                        third.time as Time,
+                        third.high,
+                        [
+                            `Blue level touched`,
+                            new Date(third.time * 1000).toISOString(),
+                        ],
+                        "rgba(15, 20, 30, 0.92)",
+                        "#e5e7eb",
+                        "#64748b",
+                    );
+                    candleSeries.attachPrimitive(label);
+                    primitives.push(label);
+                    if (currentEMA !== null && currentEMA > activeFib.blueLevel) {
+                        // Immediate blue entry.
+                        currentOperation = {
+                            currentlyOpen: false,
+                            entryLevel: {
+                                price: activeFib.blueLevel,
+                                lineName: "blue"
+                            },
+                            direction: "bullish"
+                        }
+                    } else {
+                        // Wait for orange.
+                        currentOperation = {
+                            currentlyOpen: false,
+                            entryLevel: {
+                                price: activeFib.orangeLevel,
+                                lineName: "orange"
+                            },
+                            direction: "bullish"
+                        }
+                        continue
+                    }
+                }
+            } else if (activeFib.direction === "bearish") { }
+        }
+
+        if (currentOperation) {
+            handleOperation(third, currentOperation, activeFib, currentEMA, candleSeries, primitives);
+        }
+
+        // Hand off whenever we're pending or open.
+        // if (currentOperation.entryPrice !== undefined || currentOperation.pendingLine) {
+        //     handleOperation(third, currentOperation, activeFib, currentEMA, candleSeries, primitives);
+        //     continue;
+        // }
     }
 
     // Flush whatever was still open on the final day. Without this,
@@ -174,4 +231,3 @@ export function drawGapsImpulseStrategy(
 
     return primitives;
 }
-

@@ -1,6 +1,6 @@
 import { Candle } from "../schemas";
 
-export type EmaHandler = (candle: Candle) => number | null;
+export type EmaHandler = (candle: Candle) => number;
 
 /**
  * Returns a stateful EMA function: call the result once per candle and
@@ -24,7 +24,7 @@ export function createEMAHandler(period: number): EmaHandler {
     let seedSum = 0;
     let seedCount = 0;
 
-    return (candle: Candle): number | null => {
+    return (candle: Candle): number => {
         if (emaValue === null) {
             seedSum += candle.close;
             seedCount += 1;
@@ -32,7 +32,7 @@ export function createEMAHandler(period: number): EmaHandler {
                 emaValue = seedSum / period;
                 return emaValue;
             }
-            return null;
+            return 0;
         }
         emaValue = candle.close * k + emaValue * (1 - k);
         return emaValue;

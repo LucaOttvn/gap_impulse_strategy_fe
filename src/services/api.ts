@@ -32,7 +32,7 @@ export const TIMEFRAME_MAP: Record<string, [string, string]> = {
 
 // How far back to request per timeframe. Massive requires from/to.
 export const LOOKBACK_MS: Record<string, number> = {
-  "1m": 5 * 24 * 60 * 60 * 1000,
+  "1m": 20 * 24 * 60 * 60 * 1000,
   "5m": 7 * 24 * 60 * 60 * 1000,
   "15m": 30 * 24 * 60 * 60 * 1000,
   "30m": 60 * 24 * 60 * 60 * 1000,
