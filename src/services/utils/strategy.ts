@@ -194,7 +194,33 @@ export function drawGapsImpulseStrategy(
                         continue
                     }
                 }
-            } else if (activeFib.direction === "bearish") { }
+            } else if (activeFib.direction === "bearish") {
+                if (third.high >= activeFib.blueLevel) {
+                    if (currentEMA !== null && currentEMA.value < activeFib.blueLevel) {
+                        // Immediate blue entry.
+                        currentOperation = {
+                            currentlyOpen: false,
+                            entryLevel: {
+                                price: activeFib.blueLevel,
+                                lineName: "blue"
+                            },
+                            direction: "bearish"
+                        }
+                    }
+                    else {
+                        // Wait for orange.
+                        currentOperation = {
+                            currentlyOpen: false,
+                            entryLevel: {
+                                price: activeFib.orangeLevel,
+                                lineName: "orange"
+                            },
+                            direction: "bullish"
+                        }
+                        continue
+                    }
+                }
+            }
         }
 
         if (currentOperation) {

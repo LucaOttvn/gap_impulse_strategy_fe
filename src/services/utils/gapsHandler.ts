@@ -71,7 +71,7 @@ export function handleGap(
         const bearishGapMiddlePoint = (firstCandle.high + thirdCandle.low) / 2
         const bearishGapMinSize = bearishGapMiddlePoint * 0.0005
 
-        if (thirdCandle.low - firstCandle.high < bearishGapMinSize) return null
+        if (firstCandle.low - thirdCandle.high < bearishGapMinSize) return null
 
         const bearishThirdCandleMinSize = bearishGapMinSize * 0.001
 
