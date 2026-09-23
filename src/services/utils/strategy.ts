@@ -169,19 +169,19 @@ export function drawGapsImpulseStrategy(
                 // Detect blue line touch
                 if (third.low <= activeFib.blueLevel) {
 
-                    const label = new LabelPrimitive(
-                        third.time as Time,
-                        third.high,
-                        [
-                            `Blue level touched`,
-                            new Date(third.time * 1000).toISOString(),
-                        ],
-                        "rgba(15, 20, 30, 0.92)",
-                        "#e5e7eb",
-                        "#64748b",
-                    );
-                    candleSeries.attachPrimitive(label);
-                    primitives.push(label);
+                    // const label = new LabelPrimitive(
+                    //     third.time as Time,
+                    //     third.high,
+                    //     [
+                    //         `Blue level touched`,
+                    //         new Date(third.time * 1000).toISOString(),
+                    //     ],
+                    //     "rgba(15, 20, 30, 0.92)",
+                    //     "#e5e7eb",
+                    //     "#64748b",
+                    // );
+                    // candleSeries.attachPrimitive(label);
+                    // primitives.push(label);
                     if (currentEMA !== null && currentEMA > activeFib.blueLevel) {
                         // Immediate blue entry.
                         currentOperation = {
