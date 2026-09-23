@@ -5,11 +5,9 @@ import { Direction, Gap, handleGap } from "./gapsHandler";
 import { createEMAHandler } from "./EMAHandler";
 import { dayKey } from "./dayStarts";
 import { handleOperation, Operation } from "./positionHandler";
-import { LabelPrimitive } from "./primitives/label";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
-export const MIN_GAP_SIZE = 0
 
 // ── Public options ────────────────────────────────────────
 // Everything configurable about the strategy lives here. Callers pass
@@ -135,7 +133,7 @@ export function drawGapsImpulseStrategy(
         emaLine.add(first.time, currentEMA.value);
 
         // ── Gap detection ───────────────────────────────────
-        let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow, MIN_GAP_SIZE);
+        let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow);
 
         // Handle first gap of the day
         if (newGap && !activeFib) {
@@ -173,20 +171,6 @@ export function drawGapsImpulseStrategy(
             if (activeFib.direction === "bullish") {
                 // Detect blue line touch
                 if (third.low <= activeFib.blueLevel) {
-
-                    // const label = new LabelPrimitive(
-                    //     third.time as Time,
-                    //     third.high,
-                    //     [
-                    //         `Blue level touched`,
-                    //         new Date(third.time * 1000).toISOString(),
-                    //     ],
-                    //     "rgba(15, 20, 30, 0.92)",
-                    //     "#e5e7eb",
-                    //     "#64748b",
-                    // );
-                    // candleSeries.attachPrimitive(label);
-                    // primitives.push(label);
                     if (currentEMA !== null && currentEMA.value > activeFib.blueLevel) {
                         // Immediate blue entry.
                         currentOperation = {

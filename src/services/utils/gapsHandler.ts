@@ -21,7 +21,6 @@ export function handleGap(
     primitives: ISeriesPrimitive<Time>[],
     dayHigh: number,
     dayLow: number,
-    minGapSize: number
 ): Gap | null {
 
     // Reject gaps whose third candle is still inside the opening
@@ -48,8 +47,14 @@ export function handleGap(
 
     if (isBullishGap && dayHighPassed) {
 
-        // if the gap is smaller than the minimum size, we don't consider it a valid gap and return null
-        if (thirdCandle.low - firstCandle.high < minGapSize) return null;
+        const bullishGapMiddlePoint = (thirdCandle.high + firstCandle.low) / 2
+        const bullishGapMinSize = bullishGapMiddlePoint * 0.0005
+
+        if (thirdCandle.low - firstCandle.high < bullishGapMinSize) return null
+
+        const bullishThirdCandleMinSize = bullishGapMinSize * 0.001
+
+        if (thirdCandle.high - thirdCandle.low < bullishThirdCandleMinSize) return null
 
         const newGap: Gap = {
             startTime: firstCandle.time,
@@ -63,7 +68,14 @@ export function handleGap(
         return newGap;
     } else if (isBearishGap && dayLowPassed) {
 
-        if (firstCandle.low - thirdCandle.high < minGapSize) return null;
+        const bearishGapMiddlePoint = (firstCandle.high + thirdCandle.low) / 2
+        const bearishGapMinSize = bearishGapMiddlePoint * 0.0005
+
+        if (thirdCandle.low - firstCandle.high < bearishGapMinSize) return null
+
+        const bearishThirdCandleMinSize = bearishGapMinSize * 0.001
+
+        if (thirdCandle.high - thirdCandle.low < bearishThirdCandleMinSize) return null
 
         const newGap: Gap = {
             startTime: firstCandle.time,

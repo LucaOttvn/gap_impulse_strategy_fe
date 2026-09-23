@@ -3,7 +3,6 @@ import { Candle } from "../schemas";
 import { Direction } from "./gapsHandler";
 import { GapRectanglePrimitive } from "./primitives";
 import { Fibonacci } from "./strategy";
-import { LabelPrimitive } from "./primitives/label";
 
 // No new positions are opened at or after this hour, in the strategy's
 // reference timezone. The hour is read from the candle's timestamp,
@@ -15,7 +14,7 @@ const TZ = "America/New_York";
 // Cached formatters — Intl.DateTimeFormat construction is expensive,
 // so we build one per timezone and reuse it across candles.
 const hourFormatterCache = new Map<string, Intl.DateTimeFormat>();
-function hourInZone(unixSeconds: number, tz: string): number {
+export function hourInZone(unixSeconds: number, tz: string): number {
     let f = hourFormatterCache.get(tz);
     if (!f) {
         f = new Intl.DateTimeFormat("en-US", {
@@ -44,8 +43,6 @@ export interface EntryLevel {
 function openPosition(
     currentCandle: Candle,
     currentOperation: Operation,
-    fib: Fibonacci,
-    emaValue: number | null,
     candleSeries: ISeriesApi<"Candlestick">,
     primitives: ISeriesPrimitive<Time>[],
 ): void {
@@ -117,7 +114,7 @@ export function handleOperation(
 
         if (touched) {
             currentOperation.entryLevel.price = target;
-            openPosition(currentCandle, currentOperation, fib, emaValue, candleSeries, primitives);
+            openPosition(currentCandle, currentOperation, candleSeries, primitives);
         }
     }
 }
