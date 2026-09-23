@@ -43,8 +43,8 @@ export function handleGap(
     const isBullishGap = firstCandle.high < thirdCandle.low && isThirdBullish;
     const isBearishGap = firstCandle.low > thirdCandle.high && isThirdBearish;
 
-    const dayHighPassed = thirdCandle.high > dayHigh;
-    const dayLowPassed = thirdCandle.low < dayLow;
+    const dayHighPassed = thirdCandle.close > dayHigh;
+    const dayLowPassed = thirdCandle.close < dayLow;
 
     if (isBullishGap && dayHighPassed) {
 
