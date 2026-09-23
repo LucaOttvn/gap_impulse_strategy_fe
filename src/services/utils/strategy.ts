@@ -127,7 +127,12 @@ export function drawGapsImpulseStrategy(
 
         // ── EMA update ──────────────────────────────────────
         const currentEMA = computeEma(first);
-        if (currentEMA !== null) emaLine.add(first.time, currentEMA);
+        if (currentEMA.newDay) {
+            // Flush the previous day's segment so the line stops there.
+            // `null` is `na` in createPlotLine's API.
+            emaLine.add(first.time, null);
+        }
+        emaLine.add(first.time, currentEMA.value);
 
         // ── Gap detection ───────────────────────────────────
         let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow, MIN_GAP_SIZE);
@@ -182,7 +187,7 @@ export function drawGapsImpulseStrategy(
                     // );
                     // candleSeries.attachPrimitive(label);
                     // primitives.push(label);
-                    if (currentEMA !== null && currentEMA > activeFib.blueLevel) {
+                    if (currentEMA !== null && currentEMA.value > activeFib.blueLevel) {
                         // Immediate blue entry.
                         currentOperation = {
                             currentlyOpen: false,
@@ -209,7 +214,7 @@ export function drawGapsImpulseStrategy(
         }
 
         if (currentOperation) {
-            handleOperation(third, currentOperation, activeFib, currentEMA, candleSeries, primitives);
+            handleOperation(third, currentOperation, activeFib, currentEMA.value, candleSeries, primitives);
         }
 
         // Hand off whenever we're pending or open.

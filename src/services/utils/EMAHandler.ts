@@ -1,40 +1,42 @@
 import { Candle } from "../schemas";
+import { dayKey } from "./dayStarts";
 
-export type EmaHandler = (candle: Candle) => number;
+export interface EmaResult {
+    value: number;
+    /** True on the first candle of a new trading session. */
+    newDay: boolean;
+}
+
+export type EmaHandler = (candle: Candle) => EmaResult;
 
 /**
- * Returns a stateful EMA function: call the result once per candle and
- * it returns the running EMA value, or `null` during the warm-up phase.
+ * Stateful, session-resetting EMA.
  *
- * The trick is the closure. `emaValue` / `seedSum` / `seedCount` are
- * declared here in the factory, NOT inside the returned function, so
- * they belong to this one call of `createEMAHandler` and persist across
- * every invocation of the returned function. Calling the factory twice
- * gives two independent handlers with their own private state — useful
- * for running multiple EMAs (e.g. 21 and 50) side by side.
- *
- * Warm-up: for the first `period` candles, the function simply
- * accumulates closes and returns `null`. On the `period`-th call it
- * seeds `emaValue` with their SMA (matching TradingView's `ta.ema`),
- * then switches to the standard exponential recurrence.
+ * Same math as before, but the return value also tells the caller
+ * whether this candle started a new session. The strategy uses that
+ * flag to insert an `na` break into the plotted line so it stops
+ * cleanly at the previous day's close and restarts on the new day,
+ * instead of being drawn as one continuous curve across the gap.
  */
-export function createEMAHandler(period: number): EmaHandler {
+export function createEMAHandler(
+    period: number,
+    timeZone = "America/New_York",
+): EmaHandler {
     const k = 2 / (period + 1);
     let emaValue: number | null = null;
-    let seedSum = 0;
-    let seedCount = 0;
+    let currentDayKey = "";
 
-    return (candle: Candle): number => {
-        if (emaValue === null) {
-            seedSum += candle.close;
-            seedCount += 1;
-            if (seedCount === period) {
-                emaValue = seedSum / period;
-                return emaValue;
-            }
-            return 0;
+    return (candle: Candle): EmaResult => {
+        const key = dayKey(candle.time, timeZone);
+        const newDay = key !== currentDayKey;
+
+        if (newDay) {
+            currentDayKey = key;
+            emaValue = candle.close;
+            return { value: emaValue, newDay: true };
         }
-        emaValue = candle.close * k + emaValue * (1 - k);
-        return emaValue;
+
+        emaValue = candle.close * k + emaValue! * (1 - k);
+        return { value: emaValue, newDay: false };
     };
 }
