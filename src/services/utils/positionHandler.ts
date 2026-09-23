@@ -5,6 +5,29 @@ import { GapRectanglePrimitive } from "./primitives";
 import { Fibonacci } from "./strategy";
 import { LabelPrimitive } from "./primitives/label";
 
+// No new positions are opened at or after this hour, in the strategy's
+// reference timezone. The hour is read from the candle's timestamp,
+// not from the browser's clock, so the rule holds no matter where the
+// code runs.
+const NO_OPEN_AFTER_HOUR = 18;
+const TZ = "America/New_York";
+
+// Cached formatters — Intl.DateTimeFormat construction is expensive,
+// so we build one per timezone and reuse it across candles.
+const hourFormatterCache = new Map<string, Intl.DateTimeFormat>();
+function hourInZone(unixSeconds: number, tz: string): number {
+    let f = hourFormatterCache.get(tz);
+    if (!f) {
+        f = new Intl.DateTimeFormat("en-US", {
+            timeZone: tz,
+            hour: "2-digit",
+            hourCycle: "h23",
+        });
+        hourFormatterCache.set(tz, f);
+    }
+    return parseInt(f.format(new Date(unixSeconds * 1000)), 10);
+}
+
 export interface Operation {
     currentlyOpen: boolean;
     entryLevel: EntryLevel | undefined;
@@ -32,6 +55,12 @@ function openPosition(
         currentOperation.direction === undefined
     ) return;
 
+    // ── Time cutoff ────────────────────────────────────────
+    // Refuse to open any position at or after NO_OPEN_AFTER_HOUR.
+    // This covers both the immediate path and the pending path,
+    // since both ultimately land here.
+    if (hourInZone(currentCandle.time, TZ) >= NO_OPEN_AFTER_HOUR) return;
+
     const entry = currentOperation.entryLevel.price;
     const isLong = currentOperation.direction === "bullish";
     const tp = isLong ? entry * 1.01 : entry * 0.99;
@@ -44,33 +73,6 @@ function openPosition(
     candleSeries.attachPrimitive(tpRect);
     candleSeries.attachPrimitive(slRect);
     primitives.push(tpRect, slRect);
-
-    // ── Debug label ─────────────────────────────────────────
-    // Snapshot of every variable that contributed to this entry.
-    const whichLine =
-        Math.abs(entry - fib.blueLevel) < Math.abs(entry - fib.orangeLevel) ? "blue" : "orange";
-    const fmt = (n: number | null | undefined, p = 2) =>
-        n === null || n === undefined ? "—" : n.toFixed(p);
-
-    const label = new LabelPrimitive(
-        t,
-        entry,
-        [
-            `${isLong ? "LONG" : "SHORT"} @ ${fmt(entry)}`,
-            `line: ${whichLine}`,
-            `ema: ${fmt(emaValue)}`,
-            `blue: ${fmt(fib.blueLevel)}`,
-            `orange: ${fmt(fib.orangeLevel)}`,
-            `H/L: ${fmt(currentCandle.high)} / ${fmt(currentCandle.low)}`,
-            `gap dir: ${fib.direction}`,
-        ],
-        "rgba(15, 20, 30, 0.92)",
-        "#e5e7eb",
-        "#64748b",
-        isLong ? "right" : "left",
-    );
-    // candleSeries.attachPrimitive(label);
-    // primitives.push(label);
 
     currentOperation.tpRect = tpRect;
     currentOperation.slRect = slRect;
