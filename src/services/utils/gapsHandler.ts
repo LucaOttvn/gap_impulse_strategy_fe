@@ -13,6 +13,15 @@ export interface Gap {
     direction: Direction
 }
 
+// US equities regular trading hours: 9:30 AM – 4:00 PM ET.
+// 6.5 hours = 23,400 seconds.
+const SESSION_LENGTH_SEC = 6.5 * 3600; // 23400
+
+// A candle is "the last one of the day" if the next candle would
+// start past the session close. With fixed-interval bars, that means
+// this candle's timestamp falls within one bar-width of the end.
+const CANDLE_DURATION_SEC = 60; // set to your chart interval
+
 export function handleGap(
     firstCandle: Candle,
     thirdCandle: Candle,
@@ -22,6 +31,9 @@ export function handleGap(
     dayHigh: number,
     dayLow: number,
 ): Gap | null {
+    const lastBarStartsAt = currentDayStartTime + SESSION_LENGTH_SEC - CANDLE_DURATION_SEC;
+
+    if (thirdCandle.time >= lastBarStartsAt) return null;
 
     // Reject gaps whose third candle is still inside the opening
     // window. Because candles are chronological, if the third is
@@ -30,12 +42,6 @@ export function handleGap(
 
     if (!pastOpeningWindow) return null;
 
-    // The third candle must agree with the gap's direction:
-    //   - a bullish gap is valid only if the third candle is green
-    //     (close > open) — the market kept pushing up through the void
-    //   - a bearish gap is valid only if the third candle is red
-    //     (close < open) — the market kept pushing down through the void
-    // A doji (close === open) fails both and disqualifies the gap.
     const isThirdBullish = thirdCandle.close > thirdCandle.open;
     const isThirdBearish = thirdCandle.close < thirdCandle.open;
 

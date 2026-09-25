@@ -4,7 +4,7 @@ import { createPlotLine, PlotLineHandle } from "./plotLine";
 import { Direction, Gap, handleGap } from "./gapsHandler";
 import { createEMAHandler } from "./EMAHandler";
 import { dayKey } from "./dayStarts";
-import { handleOperation, Operation } from "./positionHandler";
+import { handleOperation, openPosition, Operation } from "./positionHandler";
 
 // The first N minutes of the trading day are ignored for gap detection.
 export const OPENING_WINDOW_SEC = 15 * 60;
@@ -93,6 +93,7 @@ export function drawGapsImpulseStrategy(
         // currentDayStart === null => detect first candle ever
         // todayKey !== currentDayStart.dateKey => detect day change
         if (currentDayStart === null || todayKey !== currentDayStart.dateKey) {
+
             // Close out yesterday's lines, if any.
             if (currentDayStart !== null) finishDay();
             currentDayStart = {
@@ -179,8 +180,11 @@ export function drawGapsImpulseStrategy(
                                 price: activeFib.blueLevel,
                                 lineName: "blue"
                             },
-                            direction: "bullish"
+                            direction: "bullish",
+                            completed: false
                         }
+                        openPosition(third, currentOperation, candleSeries, primitives)
+                        continue
                     } else {
                         // Wait for orange.
                         currentOperation = {
@@ -189,12 +193,14 @@ export function drawGapsImpulseStrategy(
                                 price: activeFib.orangeLevel,
                                 lineName: "orange"
                             },
-                            direction: "bullish"
+                            direction: "bullish",
+                            completed: false
                         }
                         continue
                     }
                 }
             } else if (activeFib.direction === "bearish") {
+                // Detect blue line touch
                 if (third.high >= activeFib.blueLevel) {
                     if (currentEMA !== null && currentEMA.value < activeFib.blueLevel) {
                         // Immediate blue entry.
@@ -204,18 +210,19 @@ export function drawGapsImpulseStrategy(
                                 price: activeFib.blueLevel,
                                 lineName: "blue"
                             },
-                            direction: "bearish"
+                            direction: "bearish",
+                            completed: false
                         }
+                        openPosition(third, currentOperation, candleSeries, primitives)
+                        continue
                     }
                     else {
                         // Wait for orange.
                         currentOperation = {
                             currentlyOpen: false,
-                            entryLevel: {
-                                price: activeFib.orangeLevel,
-                                lineName: "orange"
-                            },
-                            direction: "bearish"
+                            entryLevel: undefined,
+                            direction: "bearish",
+                            completed: false
                         }
                         continue
                     }
@@ -223,15 +230,35 @@ export function drawGapsImpulseStrategy(
             }
         }
 
-        if (currentOperation) {
-            handleOperation(third, currentOperation, activeFib, currentEMA.value, candleSeries, primitives);
+        // Null checks
+        if (!currentOperation) continue
+
+        // If the operation of the day is done already, skip everything below
+        // No operation will be opened/handled until the next day
+        if (currentOperation.completed) continue
+
+        // Detect orange line touch
+        if (!currentOperation.currentlyOpen && currentOperation.direction === "bullish") {
+            if (third.low <= activeFib.orangeLevel) {
+                currentOperation.entryLevel = {
+                    price: activeFib.orangeLevel,
+                    lineName: "orange"
+                }
+                openPosition(third, currentOperation, candleSeries, primitives)
+            }
+        }
+        // Detect orange line touch
+        if (!currentOperation.currentlyOpen && currentOperation.direction === "bearish") {
+            if (third.high >= activeFib.orangeLevel) {
+                currentOperation.entryLevel = {
+                    price: activeFib.orangeLevel,
+                    lineName: "orange"
+                }
+                openPosition(third, currentOperation, candleSeries, primitives)
+            }
         }
 
-        // Hand off whenever we're pending or open.
-        // if (currentOperation.entryPrice !== undefined || currentOperation.pendingLine) {
-        //     handleOperation(third, currentOperation, activeFib, currentEMA, candleSeries, primitives);
-        //     continue;
-        // }
+        handleOperation(third, currentOperation);
     }
 
     // Flush whatever was still open on the final day. Without this,
