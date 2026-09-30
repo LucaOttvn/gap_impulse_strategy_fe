@@ -1,8 +1,8 @@
-import { useQuery, useMutation, useQueryClient, type UseQueryOptions, useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { api } from "./api";
 import type { AllPayoutsResponse } from "./api/accounts";
 import type { CreateJournalEntryInput, JournalEntriesResponse, UpdateJournalEntryInput } from "./api/journal";
-import type { CandlePage, MarketDataCandlesPayload } from "./api/market-data";
+import type { MarketDataCandlesPayload } from "./api/market-data";
 import type { PnlCalendarResponse } from "@propsim/types";
 import type {
   Account,
@@ -582,7 +582,6 @@ export function useJournalEntries(accountId: string | null, opts?: { symbol?: st
   });
 }
 
-
 export function useCreateJournalEntry() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, CreateJournalEntryInput>({
@@ -1062,46 +1061,5 @@ export function useMarkAllAnnouncementsRead() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["announcements"] });
     },
-  });
-}
-
-
-// Wall-clock size of one page, per timeframe. Sized so each page is ~1–3k
-// bars — fast to fetch, fast to render, and well under the 50k cap the
-// backend hits at Massive. 1m = 7 days ≈ 2,700 RTH bars; 1h = 1 year ≈ 1,600.
-const PAGE_WINDOW_MS: Record<string, number> = {
-  '1m': 7 * 24 * 60 * 60 * 1000,
-  '5m': 30 * 24 * 60 * 60 * 1000,
-  '15m': 90 * 24 * 60 * 60 * 1000,
-  '30m': 180 * 24 * 60 * 60 * 1000,
-  '1h': 365 * 24 * 60 * 60 * 1000,
-  '4h': 2 * 365 * 24 * 60 * 60 * 1000,
-  '1d': 5 * 365 * 24 * 60 * 60 * 1000,
-  '1w': 20 * 365 * 24 * 60 * 60 * 1000,
-};
-
-export function useInfiniteCandles(symbol: string, timeframe: string) {
-  const windowMs = PAGE_WINDOW_MS[timeframe] ?? 7 * 24 * 60 * 60 * 1000;
-  return useInfiniteQuery({
-    queryKey: ["candles-infinite", symbol, timeframe] as const,
-    initialPageParam: { to: Date.now() } as { to: number },   // ← the cast pins TPageParam
-    queryFn: ({ pageParam }) => {
-      const to = pageParam.to;
-      return api.getCandlesInRange(symbol, timefrbame, to - windowMs, to);
-    },
-    getNextPageParam: (lastPage): { to: number } | undefined => {
-      if (lastPage.candles.length === 0) return undefined;
-      const oldestSec = lastPage.candles[0]?.time;
-      if (oldestSec == null) return undefined;
-      return { to: oldestSec * 1000 - 1 };
-    },
-    staleTime: (query) => {
-      const pages = query.state.data?.pages ?? [];
-      const newest = pages[0]?.candles.at(-1);
-      if (!newest) return 30_000;
-      const ageMs = Date.now() - newest.time * 1000;
-      return ageMs > 60 * 60 * 1000 ? Infinity : 30_000;
-    },
-    placeholderData: (prev) => prev,
   });
 }

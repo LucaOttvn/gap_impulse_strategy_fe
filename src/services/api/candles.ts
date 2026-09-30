@@ -84,35 +84,3 @@ export interface CandlePage {
   candles: Candle[];
   hasMoreBefore: boolean;
 }
-
-export async function getCandlesInRange(
-  symbol: string,
-  timeframe: string,
-  fromMs: number,
-  toMs: number,
-): Promise<CandlePage> {
-  const [multiplier, timespan] = TIMEFRAME_MAP[timeframe] ?? ['1', 'minute'];
-
-  const url = new URL(`${API_BASE}/history`);
-  url.searchParams.set('ticker', symbol);
-  url.searchParams.set('multiplier', multiplier);
-  url.searchParams.set('timespan', timespan);
-  url.searchParams.set('from', new Date(fromMs).toISOString());
-  url.searchParams.set('to', new Date(toMs).toISOString());
-  url.searchParams.set('session', 'regular');
-
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`candles ${res.status}`);
-  const json = await res.json();
-
-  const candles: Candle[] = (json.results ?? []).map((r: any) => ({
-    time: Math.floor(r.t / 1000),
-    open: r.o,
-    high: r.h,
-    low: r.l,
-    close: r.c,
-    volume: r.v,
-  }));
-
-  return { candles, hasMoreBefore: !!json.metadata?.hasMoreBefore };
-}

@@ -1,4 +1,4 @@
-import {useMemo} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {useIsFeedConnected} from "../components/ConnectionIndicator.tsx";
 import {MobileAccountBar, MobileTradingPanel} from "../components/MobileTradingPanel.tsx";
 import {OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog} from "../components/TradingDialogs.tsx";
@@ -7,14 +7,14 @@ import {TradingViewTechnicalAnalysis} from "../components/TradingViewWidgets.tsx
 import {useChartPreferences, updateChartPreferences} from "../hooks/useChartPreferences.ts";
 import type {CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput} from "../services/api/journal.ts";
 import {api} from "../services/api.ts";
-import {useInfiniteCandles, useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
-import type {Candle, PlaceOrderInput, Symbol} from "../services/schemas.ts";
+import {useCandles, useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
+import type {PlaceOrderInput, Symbol} from "../services/schemas.ts";
 import {useTradingStore} from "../services/store.tsx";
 import {toast} from "../services/toast.ts";
 import {BottomPanel} from "../components/BottomPanel.tsx";
 import {ChartPanel} from "../components/ChartPanel.tsx";
 import {ChartToolbar} from "../components/ChartToolbar.tsx";
-import {REPLAY_ENABLED, type MagnetMode} from "./trading/constants.ts";
+import {REPLAY_ENABLED, type MagnetMode, type Timeframe} from "./trading/constants.ts";
 import {useReplayChartData} from "./trading/useReplayChartData.ts";
 import {useReplayPlayback} from "./trading/useReplayPlayback.ts";
 import {getPipDigits} from "./trading/utils.ts";
@@ -47,9 +47,36 @@ function getErrorMessage(err: unknown): string {
 }
 
 /**
+ * Deep-history target used after the initial fast render completes.
+ * Bars per TF, tuned so each fetch stays under the backend cap and the chart
+ * stays responsive.
+ */
+function deepLimitFor(timeframe: Timeframe): number {
+  switch (timeframe) {
+    case "1m":
+      return 3_000;
+    case "5m":
+      return 5_000;
+    case "15m":
+      return 12_000;
+    case "30m":
+      return 8_000;
+    case "1h":
+      return 8_760;
+    case "4h":
+      return 2_500;
+    case "1d":
+      return 1_000;
+    case "1w":
+      return 520;
+    default:
+      return 5_000;
+  }
+}
+
+/**
  * Top-level trading page. Owns the layout (chart + bottom panel + right rail
- * + mobile sheet) and wires the extracted hooks together. Data fetching is
- * delegated to React Query hooks; interactive state lives in the hooks below.
+ * + mobile sheet) and wires the extracted hooks together.
  */
 export function TradingPage() {
   // Global trading store: selected symbol, live ticks, active account, replay.
@@ -105,27 +132,8 @@ export function TradingPage() {
   const {data: symbols = []} = useSymbols();
   const isFeedConnected = useIsFeedConnected();
 
-  // ── Candles: infinite/paginated ────────────────────────────
-  // One page per scroll-back. Initial page covers ~7d of 1m (or the per-TF
-  // window defined in useInfiniteCandles). fetchNextPage fires when the user
-  // scrolls near the oldest loaded bar.
-  const {
-    data: candlePages,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteCandles(selectedSymbol, timeframe);
-
-  // Flatten pages into one chronological array. Dedupe by timestamp because
-  // page seams can overlap by one bar (see the -1ms in getNextPageParam).
-  const candles: Candle[] = useMemo(() => {
-    if (!candlePages) return [];
-    const byTime = new Map<number, Candle>();
-    for (const page of candlePages.pages) { 
-      for (const c of page.candles) byTime.set(c.time, c);
-    }
-    return [...byTime.values()].sort((a, b) => a.time - b.time);
-  }, [candlePages]);
+  const candleLimit = 3000;
+  const {data: candles = []} = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
 
   // Replay overrides the live candle array when active.
   const {replayCandles, replayTradeEvents} = useReplayChartData(activeAccountId);
@@ -142,11 +150,19 @@ export function TradingPage() {
   const chartPrefs = useChartPreferences();
   const tick = ticks[selectedSymbol];
   const symbolInfo = symbols.find((s) => s.name === selectedSymbol) as Symbol | undefined;
-  const liveCandleUpdates = useTradingStore((s) => s.liveCandleUpdates);
-  const liveCandle = liveCandleUpdates[`${selectedSymbol}:${timeframe}`];
+
+  const liveCandle = useTradingStore((s) => s.liveCandleUpdates[`${selectedSymbol}:${timeframe}`]);
   const pipDigits = useMemo(() => getPipDigits(symbolInfo, selectedSymbol), [symbolInfo, selectedSymbol]);
   const account = useTradingStore((s) => s.accounts.find((a) => a.id === activeAccountId));
-  const isDark = !document.documentElement.classList.contains("light");
+
+  const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains("light"));
+  useEffect(() => {
+    const mo = new MutationObserver(() => {
+      setIsDark(!document.documentElement.classList.contains("light"));
+    });
+    mo.observe(document.documentElement, {attributes: true, attributeFilter: ["class"]});
+    return () => mo.disconnect();
+  }, []);
 
   const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
   const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : [];
@@ -155,11 +171,6 @@ export function TradingPage() {
   // ── Handlers ─────────────────────────────────────────────────
   const handleQuickOrder = useQuickOrder(activeAccountId, selectedSymbol, requestConfirm);
   const handleChartModifyPosition = useModifyPosition(activeAccountId, isFeedConnected);
-
-  // Chart scroll-back trigger — asks the infinite query for the next page.
-  const handleLoadMoreHistory = () => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-  };
 
   const cycleMagnetMode = () => {
     const order: MagnetMode[] = ["none", "weak", "strong"];
@@ -247,9 +258,6 @@ export function TradingPage() {
               onQuickOrder={handleQuickOrder}
               onClearDrawings={clearDrawings}
               onClearIndicators={clearIndicators}
-              // ── NEW: infinite-history wiring ──
-              onLoadMoreHistory={handleLoadMoreHistory}
-              canLoadMoreHistory={!!hasNextPage}
             />
           </div>
 
