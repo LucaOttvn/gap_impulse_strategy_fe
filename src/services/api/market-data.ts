@@ -1,3 +1,5 @@
+import { API_BASE, TIMEFRAME_MAP } from "../api";
+import { Candle } from "../schemas";
 import { request } from "./request";
 
 export interface MarketDataSymbol {
@@ -133,3 +135,45 @@ export const marketdataApi = {
 
   getMarketDataStaleness: () => request<Record<string, unknown>>("/market-data/staleness"),
 };
+
+
+export interface CandlePage {
+  candles: Candle[];
+}
+
+/**
+ * Fetch one page of candles for [fromMs, toMs].
+ * The caller is responsible for staying under the backend's 50k-bar cap.
+ */
+export async function getCandlesInRange(
+  symbol: string,
+  timeframe: string,
+  fromMs: number,
+  toMs: number,
+): Promise<CandlePage> {
+  const [multiplier, timespan] = TIMEFRAME_MAP[timeframe] ?? ['1', 'minute'];
+
+  const url = new URL(`${API_BASE}/history`);
+  url.searchParams.set('ticker', symbol);
+  url.searchParams.set('multiplier', multiplier);
+  url.searchParams.set('timespan', timespan);
+  url.searchParams.set('from', new Date(fromMs).toISOString());
+  url.searchParams.set('to', new Date(toMs).toISOString());
+  url.searchParams.set('session', 'regular');
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`candles ${res.status}`);
+  const json = await res.json();
+
+  // Backend returns Massive's {results:[{t,o,h,l,c,v}]} shape.
+  const candles: Candle[] = (json.results ?? []).map((r: any) => ({
+    time: Math.floor(r.t / 1000),
+    open: r.o,
+    high: r.h,
+    low: r.l,
+    close: r.c,
+    volume: r.v,
+  }));
+
+  return { candles };
+}

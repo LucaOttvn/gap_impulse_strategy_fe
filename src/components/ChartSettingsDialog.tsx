@@ -27,7 +27,6 @@ export interface ChartSettingsDialogProps {
   isDark: boolean;
   activePlugins: string[];
   onTogglePlugin?: (id: string) => void;
-  onOpenNewsConfig: () => void;
   /** Whether the account has challenge metrics (controls the Challenge tab note). */
   hasAccount: boolean;
 }
@@ -386,12 +385,10 @@ function TradingTab({ prefs }: { prefs: ChartPreferences }) {
 function EventsTab({
   activePlugins,
   onTogglePlugin,
-  onOpenNewsConfig,
   onClose,
 }: {
   activePlugins: string[];
   onTogglePlugin?: (id: string) => void;
-  onOpenNewsConfig: () => void;
   onClose: () => void;
 }) {
   return (
@@ -415,7 +412,6 @@ function EventsTab({
       <button
         onClick={() => {
           onClose();
-          onOpenNewsConfig();
         }}
         className="mt-1 rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
       >
@@ -475,7 +471,7 @@ function TabBody({
   tab: TabId;
   props: Pick<
     ChartSettingsDialogProps,
-    "prefs" | "isDark" | "activePlugins" | "onTogglePlugin" | "onOpenNewsConfig" | "hasAccount"
+    "prefs" | "isDark" | "activePlugins" | "onTogglePlugin" | "hasAccount"
   > & { onClose: () => void };
 }) {
   if (tab === "appearance") return <AppearanceTab prefs={props.prefs} />;
@@ -486,7 +482,6 @@ function TabBody({
       <EventsTab
         activePlugins={props.activePlugins}
         onTogglePlugin={props.onTogglePlugin}
-        onOpenNewsConfig={props.onOpenNewsConfig}
         onClose={props.onClose}
       />
     );

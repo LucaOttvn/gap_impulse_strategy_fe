@@ -1,420 +1,180 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useIsFeedConnected } from "../components/ConnectionIndicator.tsx";
-import { MobileAccountBar, MobileTradingPanel } from "../components/MobileTradingPanel.tsx";
-import {
-  OrderConfirmDialog,
-  OrderModifyDialog,
-  PositionModifyDialog,
-} from "../components/TradingDialogs.tsx";
-import { NewsFeed as MarketNewsFeed } from "../components/TradingPowerFeatures.tsx";
-import { TradingViewTechnicalAnalysis } from "../components/TradingViewWidgets.tsx";
-import { useChartDrawings } from "../hooks/useChartDrawings.ts";
-import {
-  getChartPreferencesFromStorage,
-  updateChartPreferences,
-  useChartPreferences,
-} from "../hooks/useChartPreferences.ts";
-import { useTradeSound } from "../hooks/useTradeSound";
-import type { IndicatorType } from "../lib/indicators.ts";
-import { posthog } from "../lib/posthog";
-import type { CreateJournalEntryInput, UpdateJournalEntryInput } from "../services/api/journal.ts";
-import { api } from "../services/api.ts";
-import {
-  useCandles,
-  useCreateJournalEntry,
-  useDeleteJournalEntry,
-  useJournalEntries,
-  useOrders,
-  usePositions,
-  useSymbols,
-  useUpdateJournalEntry,
-} from "../services/queries.ts";
-import type { Order, PlaceOrderInput, Position, Symbol } from "../services/schemas.ts";
-import { useTradingStore } from "../services/store.tsx";
-import { toast } from "../services/toast.ts";
-import { BottomPanel } from "../components/BottomPanel.tsx";
-import { ChartPanel } from "../components/ChartPanel.tsx";
-import { ChartToolbar } from "../components/ChartToolbar.tsx";
-import {
-  type DrawingTool,
-  type MagnetMode,
-  REPLAY_ENABLED,
-  TIMEFRAMES,
-  type Timeframe,
-} from "./trading/constants.ts";
-import { useReplayChartData } from "./trading/useReplayChartData.ts";
-import { useReplayPlayback } from "./trading/useReplayPlayback.ts";
-import { getPipDigits } from "./trading/utils.ts";
-import { DOMPanel } from "@/components/DOMPanel.tsx";
-import { MarketClosedBanner } from "@/components/MarketClosedBanner.tsx";
-import { OrderPanel } from "@/components/OrderPanel.tsx";
-import { ReplayScrubber } from "@/components/ReplayScrubber.tsx";
-import { WatchlistPanel } from "@/components/WatchlistPanel.tsx";
+import {useMemo} from "react";
+import {useIsFeedConnected} from "../components/ConnectionIndicator.tsx";
+import {MobileAccountBar, MobileTradingPanel} from "../components/MobileTradingPanel.tsx";
+import {OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog} from "../components/TradingDialogs.tsx";
+import {NewsFeed as MarketNewsFeed} from "../components/TradingPowerFeatures.tsx";
+import {TradingViewTechnicalAnalysis} from "../components/TradingViewWidgets.tsx";
+import {useChartPreferences, updateChartPreferences} from "../hooks/useChartPreferences.ts";
+import type {CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput} from "../services/api/journal.ts";
+import {api} from "../services/api.ts";
+import {useInfiniteCandles, useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
+import type {Candle, PlaceOrderInput, Symbol} from "../services/schemas.ts";
+import {useTradingStore} from "../services/store.tsx";
+import {toast} from "../services/toast.ts";
+import {BottomPanel} from "../components/BottomPanel.tsx";
+import {ChartPanel} from "../components/ChartPanel.tsx";
+import {ChartToolbar} from "../components/ChartToolbar.tsx";
+import {REPLAY_ENABLED, type MagnetMode} from "./trading/constants.ts";
+import {useReplayChartData} from "./trading/useReplayChartData.ts";
+import {useReplayPlayback} from "./trading/useReplayPlayback.ts";
+import {getPipDigits} from "./trading/utils.ts";
+import {DOMPanel} from "@/components/DOMPanel.tsx";
+import {MarketClosedBanner} from "@/components/MarketClosedBanner.tsx";
+import {OrderPanel} from "@/components/OrderPanel.tsx";
+import {ReplayScrubber} from "@/components/ReplayScrubber.tsx";
+import {WatchlistPanel} from "@/components/WatchlistPanel.tsx";
 
+// Extracted hooks — each owns one concern (see ./trading/hooks/).
+import {useBottomPanelResize} from "./trading/hooks/useBottomPanelResize.ts";
+import {useChartPlugins} from "./trading/hooks/useChartPlugins.ts";
+import {useChartTooling} from "./trading/hooks/useChartTooling.ts";
+import {useConfirmOrder} from "./trading/hooks/useConfirmOrder.ts";
+import {useModifyPosition} from "./trading/hooks/useModifyPosition.ts";
+import {useQuickOrder} from "./trading/hooks/useQuickOrder.ts";
+import {useTickPriming} from "./trading/hooks/useTickPriming.ts";
+import {useTimeframePersistence} from "./trading/hooks/useTimeframePersistence.ts";
+import {useTradingAnalytics} from "./trading/hooks/useTradingAnalytics.ts";
+import {useTradingLayout} from "./trading/hooks/useTradingLayout.ts";
+import {useTradingState} from "./trading/hooks/useTradingState.ts";
 
-type ErrorWithMessage = { message?: string };
-
-type ConfirmOrderState = {
-  symbol: string;
-  side: "BUY" | "SELL";
-  type: string;
-  quantity: number;
-  price?: number;
-  stopPrice?: number;
-  takeProfit?: number;
-  stopLoss?: number;
-  _submit: () => Promise<unknown>;
-} | null;
-
+/** Narrow an unknown error object down to a display message. */
 function getErrorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
-    const message = (err as ErrorWithMessage).message;
+    const message = (err as {message?: string}).message;
     if (typeof message === "string" && message.length > 0) return message;
   }
   return "Request failed";
 }
 
+/**
+ * Top-level trading page. Owns the layout (chart + bottom panel + right rail
+ * + mobile sheet) and wires the extracted hooks together. Data fetching is
+ * delegated to React Query hooks; interactive state lives in the hooks below.
+ */
 export function TradingPage() {
-  const hasTrackedFirstTrade = useRef(false);
+  // Global trading store: selected symbol, live ticks, active account, replay.
+  const {selectedSymbol, setSelectedSymbol, ticks, updateTick, activeAccountId, symbols: _storeSymbols, replayVersion, isReplaying} = useTradingStore();
 
-  const handleFirstTrade = useCallback(() => {
-    if (!hasTrackedFirstTrade.current) {
-      hasTrackedFirstTrade.current = true;
-      posthog.capture("funnel.trade.first_executed", { sessionId: posthog.get_session_id?.() });
-    }
-  }, []);
+  // Timeframe is per-symbol and persisted to localStorage.
+  const [timeframe, handleTimeframeChange] = useTimeframePersistence(selectedSymbol);
 
+  // Chart tooling: indicators, armed drawing tool, drawings + undo/redo.
   const {
-    selectedSymbol,
-    setSelectedSymbol,
-    ticks,
-    updateTick,
-    activeAccountId,
-    symbols: _storeSymbols,
-    replayVersion,
-    isReplaying,
-  } = useTradingStore();
-  // Chart timeframe persistence (#8)
-  const [timeframe, setTimeframe] = useState<Timeframe>(() => {
-    const saved = localStorage.getItem(`tf_${selectedSymbol}`);
-    return saved && TIMEFRAMES.includes(saved as Timeframe) ? (saved as Timeframe) : "15m";
-  });
-  const handleTimeframeChange = useCallback(
-    (tf: Timeframe) => {
-      setTimeframe(tf);
-      localStorage.setItem(`tf_${selectedSymbol}`, tf);
-    },
-    [selectedSymbol],
-  );
-  // Restore timeframe when symbol changes
-  useEffect(() => {
-    const saved = localStorage.getItem(`tf_${selectedSymbol}`);
-    if (saved && TIMEFRAMES.includes(saved as Timeframe)) setTimeframe(saved as Timeframe);
-  }, [selectedSymbol]);
-
-  const [activeIndicators, setActiveIndicators] = useState<IndicatorType[]>([]);
-  const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
-  const [drawingTool, setDrawingTool] = useState<DrawingTool>("none");
-  const {
+    activeIndicators,
+    setActiveIndicators,
+    toggleIndicator,
+    clearIndicators,
+    drawingTool,
+    setDrawingTool,
+    handleDrawingComplete,
     drawings,
     addDrawing,
     updateDrawing,
+    showIndicatorMenu,
+    setShowIndicatorMenu,
     removeDrawing,
     clearDrawings,
     undo: undoDrawing,
     redo: redoDrawing,
-  } = useChartDrawings(selectedSymbol, timeframe);
-  const [activePlugins, setActivePlugins] = useState<string[]>(
-    () => getChartPreferencesFromStorage().activePlugins,
-  );
-  const handleTogglePlugin = useCallback((id: string) => {
-    setActivePlugins((prev) => {
-      const next = prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id];
-      updateChartPreferences({ activePlugins: next });
-      return next;
-    });
-  }, []);
-  // Template load — replace the whole plugin list at once.
-  const handleSetPlugins = useCallback((ids: string[]) => {
-    setActivePlugins(ids);
-    updateChartPreferences({ activePlugins: ids });
-  }, []);
-  const [bottomTab, setBottomTab] = useState<
-    "positions" | "orders" | "history" | "journal" | "calendar" | "news" | "ai-trader"
-  >("positions");
-  const [rightPanel, setRightPanel] = useState<
-    "order" | "dom" | "watchlist" | "news" | "ai-trader" | "tv-analysis"
-  >("order");
-  const [showRightPanel, setShowRightPanel] = useState(true);
+  } = useChartTooling(selectedSymbol, timeframe);
 
-  // ── Vertical resize: chart vs bottom panel ──
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
-    const saved = localStorage.getItem("bottomPanelHeight");
-    return saved ? parseInt(saved, 10) : 220;
+  // Chart plugins, layout chrome, trading-mode state.
+  const {activePlugins, togglePlugin, setPlugins} = useChartPlugins();
+  const {height: bottomPanelHeight, handleResizeStart} = useBottomPanelResize();
+  const {bottomTab, setBottomTab, rightPanel, setRightPanel, showRightPanel, toggleRightPanel, mobilePanelOpen, setMobilePanelOpen} = useTradingLayout();
+  const {oneClick, toggleOneClick, soundMuted, toggleSoundMute, playTradeSound, modifyingPosition, setModifyingPosition, modifyingOrder, setModifyingOrder} = useTradingState();
+
+  // Order confirmation dialog + funnel analytics.
+  const {
+    pending: confirmOrder,
+    loading: confirmLoading,
+    request: requestConfirm,
+    confirm: confirmOrderSubmit,
+    cancel: cancelConfirmOrder,
+  } = useConfirmOrder(() => {
+    playTradeSound();
+    trackFirstTrade();
   });
-  const resizingRef = useRef(false);
-  const resizeStartY = useRef(0);
-  const resizeStartH = useRef(0);
+  const {trackFirstTrade} = useTradingAnalytics();
 
-  const handleResizeStart = useCallback(
-    (e: React.MouseEvent | React.TouchEvent) => {
-      e.preventDefault();
-      resizingRef.current = true;
-      const clientY = "touches" in e ? e.touches[0]!.clientY : e.clientY;
-      resizeStartY.current = clientY;
-      resizeStartH.current = bottomPanelHeight;
+  // ── Effects ──────────────────────────────────────────────────
+  useTickPriming(selectedSymbol, updateTick);
+  useReplayPlayback(activeAccountId ?? "");
 
-      const onMove = (ev: MouseEvent | TouchEvent) => {
-        if (!resizingRef.current) return;
-        const y = "touches" in ev ? ev.touches[0]!.clientY : (ev as MouseEvent).clientY;
-        const delta = resizeStartY.current - y;
-        const newH = Math.max(100, Math.min(600, resizeStartH.current + delta));
-        setBottomPanelHeight(newH);
-      };
-      const onUp = () => {
-        resizingRef.current = false;
-        setBottomPanelHeight((h) => {
-          localStorage.setItem("bottomPanelHeight", String(h));
-          return h;
-        });
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-        window.removeEventListener("touchmove", onMove);
-        window.removeEventListener("touchend", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-      window.addEventListener("touchmove", onMove, { passive: false });
-      window.addEventListener("touchend", onUp);
-    },
-    [bottomPanelHeight],
-  );
-
-  // (#4) One-click trading mode
-  const [oneClick, setOneClick] = useState(
-    () => localStorage.getItem("oneClickTrading") === "true",
-  );
-
-  // Trade sound effect
-  const { muted: soundMuted, toggleMute: toggleSoundMute, playTradeSound } = useTradeSound();
-  const toggleOneClick = useCallback(() => {
-    setOneClick((prev) => {
-      const v = !prev;
-      localStorage.setItem("oneClickTrading", String(v));
-      return v;
-    });
-  }, []);
-
-  // (#6) Position modify dialog
-  const [modifyingPosition, setModifyingPosition] = useState<Position | null>(null);
-
-  // (#30) Order modify dialog
-  const [modifyingOrder, setModifyingOrder] = useState<Order | null>(null);
-
-  // (#7) Order confirmation dialog
-  const [confirmOrder, setConfirmOrder] = useState<ConfirmOrderState>(null);
-  const [confirmLoading, setConfirmLoading] = useState(false);
-
-  const queryClient = useQueryClient();
-  const { data: symbols = [] } = useSymbols();
+  // ── Data ─────────────────────────────────────────────────────
+  const {data: symbols = []} = useSymbols();
   const isFeedConnected = useIsFeedConnected();
 
-  // Prime the active symbol with a fresh server-side snapshot immediately on
-  // symbol switch so bid/ask appears without waiting for the next WS tick.
-  useEffect(() => {
-    let cancelled = false;
-    void api
-      .getTick(selectedSymbol)
-      .then((tick) => {
-        if (cancelled || !tick) return;
-        updateTick(
-          selectedSymbol,
-          Number(tick.bid),
-          Number(tick.ask),
-          typeof tick.timestamp === "number" ? tick.timestamp : Date.now(),
-        );
-      })
-      .catch(() => {
-        // Ignore snapshot misses; WS stream remains authoritative.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSymbol, updateTick]);
+  // ── Candles: infinite/paginated ────────────────────────────
+  // One page per scroll-back. Initial page covers ~7d of 1m (or the per-TF
+  // window defined in useInfiniteCandles). fetchNextPage fires when the user
+  // scrolls near the oldest loaded bar.
+  const {
+    data: candlePages,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteCandles(selectedSymbol, timeframe);
 
-  // Handler for chart drag-to-edit SL/TP levels
-  const handleChartModifyPosition = useCallback(
-    async (positionId: string, mods: { takeProfit?: number | null; stopLoss?: number | null }) => {
-      if (!isFeedConnected) {
-        toast.warning(
-          "No Data Feed",
-          "Cannot modify positions while disconnected from the data feed",
-        );
-        if (activeAccountId)
-          queryClient.invalidateQueries({
-            queryKey: ["positions", activeAccountId],
-          });
-        return;
-      }
-      try {
-        await api.modifyPosition(positionId, mods);
-        const field = mods.takeProfit !== undefined ? "TP" : "SL";
-        const price = mods.takeProfit !== undefined ? mods.takeProfit : mods.stopLoss;
-        toast.success(`${field} Updated`, `${field} set to ${price}`);
-        if (activeAccountId) {
-          queryClient.invalidateQueries({
-            queryKey: ["positions", activeAccountId],
-          });
-        }
-      } catch (err: unknown) {
-        toast.error("Modify Failed", getErrorMessage(err));
-        // Refetch to revert price line to original value
-        if (activeAccountId) {
-          queryClient.invalidateQueries({
-            queryKey: ["positions", activeAccountId],
-          });
-        }
-      }
-    },
-    [activeAccountId, queryClient, isFeedConnected],
-  );
-
-  // Chart context-menu quick orders (Buy/Sell limit/stop at the clicked price).
-  // Always routes through the confirm dialog so a stray right-click can never
-  // place an order directly.
-  const handleQuickOrder = useCallback(
-    (side: "BUY" | "SELL", type: "LIMIT" | "STOP", price: number) => {
-      if (!activeAccountId) {
-        toast.warning("No Account", "Select an account before placing orders");
-        return;
-      }
-      const input: PlaceOrderInput = {
-        accountId: activeAccountId,
-        symbol: selectedSymbol,
-        side,
-        type,
-        quantity: 1,
-        ...(type === "LIMIT" ? { price } : { stopPrice: price }),
-      };
-      setConfirmOrder({
-        symbol: selectedSymbol,
-        side,
-        type,
-        quantity: 1,
-        price: type === "LIMIT" ? price : undefined,
-        stopPrice: type === "STOP" ? price : undefined,
-        _submit: () => api.placeOrder(input),
-      });
-    },
-    [activeAccountId, selectedSymbol],
-  );
-
-  const handleClearIndicators = useCallback(() => {
-    setActiveIndicators([]);
-  }, []);
-
-  // Deep-history target used after the initial fast render completes.
-  const deepCandleLimit = useMemo(() => {
-    switch (timeframe) {
-      case "1m":
-        return 3_000;
-      case "5m":
-        return 5_000;
-      case "15m":
-        return 12_000;
-      case "30m":
-        return 8_000;
-      case "1h":
-        return 8_760;
-      case "4h":
-        return 2_500;
-      case "1d":
-        return 1_000;
-      case "1w":
-        return 520;
-      default:
-        return 5_000;
+  // Flatten pages into one chronological array. Dedupe by timestamp because
+  // page seams can overlap by one bar (see the -1ms in getNextPageParam).
+  const candles: Candle[] = useMemo(() => {
+    if (!candlePages) return [];
+    const byTime = new Map<number, Candle>();
+    for (const page of candlePages.pages) { 
+      for (const c of page.candles) byTime.set(c.time, c);
     }
-  }, [timeframe]);
-  // First paint: viewport-sized so the initial fetch is as small as possible.
-  // Mobile (<768px) needs fewer bars to fill the screen; desktop gets more.
-  // The deep-history fetch fires 400ms later and loads a full year of data.
-  const firstPaintCandleLimit = useMemo(() => {
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-    return isMobile ? 500 : 400;
-  }, []);
-  const [candleLimit, setCandleLimit] = useState(firstPaintCandleLimit);
-  useEffect(() => {
-    setCandleLimit(firstPaintCandleLimit);
-    // Wait long enough for the first-paint response to arrive and render
-    // before firing the heavier deep-history request. 400 ms is a reasonable
-    // budget for a cached/warm DB response; users on fast connections will
-    // see data before the deep load starts, avoiding visible re-draws.
-    const timer = window.setTimeout(() => {
-      setCandleLimit(deepCandleLimit);
-    }, 400);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [selectedSymbol, timeframe, firstPaintCandleLimit, deepCandleLimit]);
-  const { data: candles = [] } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
-  // Replay: sliced 1m buffer + trade-event markers; null when not replaying.
-  // While replayCandles is set, the live tick/candle feed is suppressed below
-  // so real-time data can't paint over the playback.
-  const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId);
-  const chartPrefs = useChartPreferences();
-  const cycleMagnetMode = useCallback(() => {
-    const order: MagnetMode[] = ["none", "weak", "strong"];
-    const next = order[(order.indexOf(chartPrefs.magnetMode) + 1) % order.length] ?? "none";
-    updateChartPreferences({ magnetMode: next });
-  }, [chartPrefs.magnetMode]);
-  useReplayPlayback(activeAccountId ?? "");
-  const { data: positions = [] } = usePositions(activeAccountId);
-  const { data: orders = [] } = useOrders(activeAccountId);
-  const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
-  const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : [];
-  const positionPnl = useMemo(
-    () => positions.reduce((sum, position) => sum + (position.unrealizedPnl || 0), 0),
-    [positions],
-  );
+    return [...byTime.values()].sort((a, b) => a.time - b.time);
+  }, [candlePages]);
 
-  // (#26) Trade journal
-  const { data: journalData, isLoading: journalLoading } = useJournalEntries(activeAccountId);
+  // Replay overrides the live candle array when active.
+  const {replayCandles, replayTradeEvents} = useReplayChartData(activeAccountId);
+
+  // Positions, orders, journal.
+  const {data: positions = []} = usePositions(activeAccountId);
+  const {data: orders = []} = useOrders(activeAccountId);
+  const {data: journalData, isLoading: journalLoading} = useJournalEntries(activeAccountId);
   const createJournal = useCreateJournalEntry();
   const updateJournal = useUpdateJournalEntry();
   const deleteJournal = useDeleteJournalEntry();
 
-  // Get account data for risk display
-  const account = useTradingStore((s) => s.accounts.find((a) => a.id === activeAccountId));
-
+  // ── Derived ──────────────────────────────────────────────────
+  const chartPrefs = useChartPreferences();
   const tick = ticks[selectedSymbol];
   const symbolInfo = symbols.find((s) => s.name === selectedSymbol) as Symbol | undefined;
   const liveCandleUpdates = useTradingStore((s) => s.liveCandleUpdates);
   const liveCandle = liveCandleUpdates[`${selectedSymbol}:${timeframe}`];
-  const pipDigits = useMemo(
-    () => getPipDigits(symbolInfo, selectedSymbol),
-    [symbolInfo, selectedSymbol],
-  );
-
+  const pipDigits = useMemo(() => getPipDigits(symbolInfo, selectedSymbol), [symbolInfo, selectedSymbol]);
+  const account = useTradingStore((s) => s.accounts.find((a) => a.id === activeAccountId));
   const isDark = !document.documentElement.classList.contains("light");
 
-  // Mobile trading state
-  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
+  const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : [];
+  const positionPnl = useMemo(() => positions.reduce((sum, position) => sum + (position.unrealizedPnl || 0), 0), [positions]);
+
+  // ── Handlers ─────────────────────────────────────────────────
+  const handleQuickOrder = useQuickOrder(activeAccountId, selectedSymbol, requestConfirm);
+  const handleChartModifyPosition = useModifyPosition(activeAccountId, isFeedConnected);
+
+  // Chart scroll-back trigger — asks the infinite query for the next page.
+  const handleLoadMoreHistory = () => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  };
+
+  const cycleMagnetMode = () => {
+    const order: MagnetMode[] = ["none", "weak", "strong"];
+    const next = order[(order.indexOf(chartPrefs.magnetMode) + 1) % order.length] ?? "none";
+    updateChartPreferences({magnetMode: next});
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* ── Mobile Account Bar (small screens only) ────── */}
+      {/* Mobile Account Bar */}
       <div className="md:hidden">
-        <MobileAccountBar
-          balance={account?.balance ?? 0}
-          equity={account?.equity ?? account?.balance ?? 0}
-          margin={account?.margin ?? 0}
-          pnl={positionPnl}
-        />
+        <MobileAccountBar balance={account?.balance ?? 0} equity={account?.equity ?? account?.balance ?? 0} margin={account?.margin ?? 0} pnl={positionPnl} />
       </div>
 
-      {/* ── Top Toolbar ──────────────────────────────────── */}
+      {/* Top Toolbar */}
       <ChartToolbar
         selectedSymbol={selectedSymbol}
         symbols={symbols}
@@ -422,11 +182,7 @@ export function TradingPage() {
         timeframe={timeframe}
         onTimeframeChange={handleTimeframeChange}
         activeIndicators={activeIndicators}
-        onToggleIndicator={(type) =>
-          setActiveIndicators((prev) =>
-            prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
-          )
-        }
+        onToggleIndicator={toggleIndicator}
         showIndicatorMenu={showIndicatorMenu}
         onToggleIndicatorMenu={() => setShowIndicatorMenu((v) => !v)}
         drawingTool={drawingTool}
@@ -436,28 +192,25 @@ export function TradingPage() {
         rightPanel={rightPanel}
         onRightPanel={setRightPanel}
         showRightPanel={showRightPanel}
-        onToggleRightPanel={() => setShowRightPanel((v) => !v)}
+        onToggleRightPanel={toggleRightPanel}
         tick={tick}
         symbolInfo={symbolInfo}
         isReplaying={isReplaying}
         replayAccountId={activeAccountId}
         activePlugins={activePlugins}
-        onTogglePlugin={handleTogglePlugin}
+        onTogglePlugin={togglePlugin}
         onSetIndicators={setActiveIndicators}
-        onSetPlugins={handleSetPlugins}
+        onSetPlugins={setPlugins}
         magnetMode={chartPrefs.magnetMode}
         onCycleMagnet={cycleMagnetMode}
         stayInDrawingMode={chartPrefs.stayInDrawingMode}
-        onToggleStayInDrawingMode={() =>
-          updateChartPreferences({ stayInDrawingMode: !chartPrefs.stayInDrawingMode })
-        }
+        onToggleStayInDrawingMode={() => updateChartPreferences({stayInDrawingMode: !chartPrefs.stayInDrawingMode})}
       />
 
       <MarketClosedBanner symbolInfo={symbolInfo} />
 
-      {/* ── Main Layout ──────────────────────────────────── */}
+      {/* Main Layout */}
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-        {/* Chart + Bottom Panel */}
         <div className="flex flex-col flex-1 min-w-0">
           {/* Chart Area */}
           <div className="flex-1 min-h-[200px] relative">
@@ -472,7 +225,7 @@ export function TradingPage() {
               onAddDrawing={addDrawing}
               onUpdateDrawing={updateDrawing}
               onRemoveDrawing={removeDrawing}
-              onDrawingComplete={() => setDrawingTool("none")}
+              onDrawingComplete={handleDrawingComplete}
               onDrawingToolSelect={setDrawingTool}
               onUndoDrawing={undoDrawing}
               onRedoDrawing={redoDrawing}
@@ -488,21 +241,21 @@ export function TradingPage() {
               replayTradeEvents={replayTradeEvents}
               isReplaying={isReplaying}
               activePlugins={activePlugins}
-              onTogglePlugin={handleTogglePlugin}
+              onTogglePlugin={togglePlugin}
               accountEquity={account?.equity ?? account?.balance ?? 0}
               accountId={activeAccountId}
               onQuickOrder={handleQuickOrder}
               onClearDrawings={clearDrawings}
-              onClearIndicators={handleClearIndicators}
+              onClearIndicators={clearIndicators}
+              // ── NEW: infinite-history wiring ──
+              onLoadMoreHistory={handleLoadMoreHistory}
+              canLoadMoreHistory={!!hasNextPage}
             />
           </div>
 
-          {/* Replay timeline scrubber — disabled until the feature is QA'd */}
-          {REPLAY_ENABLED && isReplaying && activeAccountId != null && (
-            <ReplayScrubber accountId={activeAccountId} />
-          )}
+          {REPLAY_ENABLED && isReplaying && activeAccountId != null && <ReplayScrubber accountId={activeAccountId} />}
 
-          {/* ── Resize Handle ── */}
+          {/* Resize Handle */}
           <div
             onMouseDown={handleResizeStart}
             onTouchStart={handleResizeStart}
@@ -511,7 +264,7 @@ export function TradingPage() {
             <div className="w-8 h-0.5 rounded-full bg-border group-hover:bg-primary/50 transition-colors" />
           </div>
 
-          {/* Bottom Panel (Positions / Orders / Journal / Calendar / News) */}
+          {/* Bottom Panel */}
           <BottomPanel
             tab={bottomTab}
             onTabChange={setBottomTab}
@@ -524,32 +277,29 @@ export function TradingPage() {
             onSelectOrderSymbol={setSelectedSymbol}
             height={bottomPanelHeight}
             isFeedConnected={isFeedConnected}
-            journalEntries={journalData?.entries || []}
+            journalEntries={((journalData as {entries?: JournalEntry[]} | undefined)?.entries ?? []) || []}
             journalLoading={journalLoading}
             onCreateJournal={(data: CreateJournalEntryInput) =>
               createJournal.mutate(data, {
                 onSuccess: () => toast.success("Journal", "Entry saved"),
-                onError: (err: unknown) =>
-                  toast.error("Journal", getErrorMessage(err) || "Failed to save"),
+                onError: (err: unknown) => toast.error("Journal", getErrorMessage(err) || "Failed to save"),
               })
             }
             onUpdateJournal={(id: string, data: UpdateJournalEntryInput) =>
               updateJournal.mutate(
-                { id, accountId: activeAccountId!, ...data },
+                {id, accountId: activeAccountId!, ...data},
                 {
                   onSuccess: () => toast.success("Journal", "Entry updated"),
-                  onError: (err: unknown) =>
-                    toast.error("Journal", getErrorMessage(err) || "Failed to update"),
+                  onError: (err: unknown) => toast.error("Journal", getErrorMessage(err) || "Failed to update"),
                 },
               )
             }
             onDeleteJournal={(id: string) =>
               deleteJournal.mutate(
-                { id, accountId: activeAccountId! },
+                {id, accountId: activeAccountId!},
                 {
                   onSuccess: () => toast.success("Journal", "Entry deleted"),
-                  onError: (err: unknown) =>
-                    toast.error("Journal", getErrorMessage(err) || "Failed to delete"),
+                  onError: (err: unknown) => toast.error("Journal", getErrorMessage(err) || "Failed to delete"),
                 },
               )
             }
@@ -567,14 +317,14 @@ export function TradingPage() {
                 accountId={activeAccountId}
                 oneClick={oneClick}
                 onToggleOneClick={toggleOneClick}
-                onConfirmOrder={setConfirmOrder}
+                onConfirmOrder={requestConfirm}
                 accountBalance={account?.balance}
                 isFeedConnected={isFeedConnected}
                 soundMuted={soundMuted}
                 onToggleMute={toggleSoundMute}
                 onOrderSuccess={() => {
                   playTradeSound();
-                  handleFirstTrade();
+                  trackFirstTrade();
                 }}
               />
             )}
@@ -597,20 +347,14 @@ export function TradingPage() {
             )}
             {rightPanel === "tv-analysis" && (
               <div className="flex-1 overflow-hidden">
-                <TradingViewTechnicalAnalysis
-                  symbol={selectedSymbol}
-                  theme={isDark ? "dark" : "light"}
-                  interval={timeframe}
-                  width="100%"
-                  height="100%"
-                />
+                <TradingViewTechnicalAnalysis symbol={selectedSymbol} theme={isDark ? "dark" : "light"} interval={timeframe} width="100%" height="100%" />
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* ── Mobile Trading Panel (small screens only) ──── */}
+      {/* Mobile Trading Panel */}
       <div className="md:hidden">
         {!mobilePanelOpen && (
           <button
@@ -623,10 +367,7 @@ export function TradingPage() {
         {mobilePanelOpen && (
           <div className="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto bg-card border-t border-border rounded-t-2xl shadow-2xl safe-area-bottom">
             <div className="flex justify-center py-1">
-              <button
-                onClick={() => setMobilePanelOpen(false)}
-                className="w-10 h-1.5 rounded-full bg-muted-foreground/30"
-              />
+              <button onClick={() => setMobilePanelOpen(false)} className="w-10 h-1.5 rounded-full bg-muted-foreground/30" />
             </div>
             <MobileTradingPanel
               symbol={selectedSymbol}
@@ -635,16 +376,13 @@ export function TradingPage() {
               positions={positions || []}
               onPlaceOrder={(order) => {
                 if (oneClick) {
-                  api
-                    .placeOrder({ ...order, accountId: activeAccountId! } as PlaceOrderInput)
-                    .catch(() => {});
+                  api.placeOrder({...order, accountId: activeAccountId!} as PlaceOrderInput).catch(() => {});
                   setMobilePanelOpen(false);
                   return;
                 }
-                setConfirmOrder({
+                requestConfirm({
                   ...order,
-                  _submit: () =>
-                    api.placeOrder({ ...order, accountId: activeAccountId! } as PlaceOrderInput),
+                  _submit: () => api.placeOrder({...order, accountId: activeAccountId!} as PlaceOrderInput),
                 });
                 setMobilePanelOpen(false);
               }}
@@ -654,42 +392,9 @@ export function TradingPage() {
       </div>
 
       {/* Dialogs */}
-      <PositionModifyDialog
-        position={modifyingPosition}
-        onClose={() => setModifyingPosition(null)}
-        onSaved={() => setModifyingPosition(null)}
-        tick={tick}
-        isFeedConnected={isFeedConnected}
-      />
-      <OrderModifyDialog
-        order={modifyingOrder}
-        onClose={() => setModifyingOrder(null)}
-        onSaved={() => setModifyingOrder(null)}
-        tick={tick}
-      />
-      <OrderConfirmDialog
-        isOpen={!!confirmOrder}
-        order={confirmOrder}
-        onConfirm={() => {
-          if (confirmOrder?._submit) {
-            setConfirmLoading(true);
-            confirmOrder
-              ._submit()
-              .then(() => {
-                playTradeSound();
-                handleFirstTrade();
-              })
-              .finally(() => {
-                setConfirmLoading(false);
-                setConfirmOrder(null);
-              });
-          }
-        }}
-        onCancel={() => setConfirmOrder(null)}
-        tick={tick}
-        symbolInfo={symbolInfo}
-        loading={confirmLoading}
-      />
+      <PositionModifyDialog position={modifyingPosition} onClose={() => setModifyingPosition(null)} onSaved={() => setModifyingPosition(null)} tick={tick} isFeedConnected={isFeedConnected} />
+      <OrderModifyDialog order={modifyingOrder} onClose={() => setModifyingOrder(null)} onSaved={() => setModifyingOrder(null)} tick={tick} />
+      <OrderConfirmDialog isOpen={!!confirmOrder} order={confirmOrder} onConfirm={confirmOrderSubmit} onCancel={cancelConfirmOrder} tick={tick} symbolInfo={symbolInfo} loading={confirmLoading} />
     </div>
   );
 }

@@ -1,8 +1,9 @@
-export const API_BASE = "https://gap-impulse-strategy-be.onrender.com";
-// export const API_BASE = "http://localhost:3000";
+// export const API_BASE = "https://gap-impulse-strategy-be.onrender.com";
+export const API_BASE = "http://localhost:3000";
 import { demoApi } from "./demo/api.ts";
 import { getCandlesWithMeta } from "./api/candles.ts";
 import { SYMBOLS } from "./api/symbols.ts";
+import { Candle } from "./schemas.ts";
 
 
 export class ApiError extends Error {
@@ -32,7 +33,7 @@ export const TIMEFRAME_MAP: Record<string, [string, string]> = {
 
 // How far back to request per timeframe. Massive requires from/to.
 export const LOOKBACK_MS: Record<string, number> = {
-  "1m": 100 * 24 * 60 * 60 * 1000,
+  "1m": 79 * 24 * 60 * 60 * 1000,
   "5m": 7 * 24 * 60 * 60 * 1000,
   "15m": 30 * 24 * 60 * 60 * 1000,
   "30m": 60 * 24 * 60 * 60 * 1000,
@@ -69,6 +70,8 @@ const liveApi = {
   getCandlesWithMeta: (symbol: string, timeframe: string) =>
     getCandlesWithMeta(symbol, timeframe),
 
+  getCandlesInRange,
+
   getSymbols: () => Promise.resolve(SYMBOLS),
 };
 
@@ -77,4 +80,45 @@ export const api = new Proxy(liveApi as Record<string, unknown>, {
     if (prop in target) return target[prop];
     return benign;
   },
-}) as typeof liveApi & Record<string, (...args: never[]) => Promise<unknown>>;
+}) as typeof liveApi & Record<string, (...args: any[]) => Promise<unknown>>;
+
+// ── Add near the top of services/api.ts, next to getCandlesWithMeta ──
+
+/**
+ * Fetch one page of candles for [fromMs, toMs]. The caller decides the window
+ * size — this function just forwards it to the backend's /api/stocks endpoint,
+ * which accepts from/to as ISO timestamps.
+ */
+export async function getCandlesInRange(
+  symbol: string,
+  timeframe: string,
+  fromMs: number,
+  toMs: number,
+): Promise<{ candles: Candle[] }> {
+  const [multiplier, timespan] = TIMEFRAME_MAP[timeframe] ?? ["1", "minute"];
+
+  const url = new URL(`${API_BASE}/api/stocks`);
+  url.searchParams.set("ticker", symbol);
+  url.searchParams.set("multiplier", multiplier);
+  url.searchParams.set("timespan", timespan);
+  // Massive accepts Unix timestamps (ms) or YYYY-MM-DD — NOT ISO 8601.
+  // Your function already receives millis, so just pass them through.
+  url.searchParams.set("from", String(fromMs));
+  url.searchParams.set("to", String(toMs));
+  url.searchParams.set("session", "regular");
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new ApiError(`Candles request failed (${res.status})`, res.status);
+  const json = await res.json();
+
+  const candles: Candle[] = (json.results ?? []).map((r: { t: number; o: number; h: number; l: number; c: number; v: number }) => ({
+    time: Math.floor(r.t / 1000),
+    open: r.o,
+    high: r.h,
+    low: r.l,
+    close: r.c,
+    volume: r.v,
+  }));
+
+  return { candles };
+}

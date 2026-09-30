@@ -1,41 +1,3 @@
-// RESPONSIBILITY
-// --------------
-// Owns the chart panel: creating/destroying the lightweight-charts instance,
-// wiring the ~15 effects that keep the chart in sync with live data, drawings,
-// positions, plugins and UI state, and rendering the overlay HUD. It contains
-// NO raw chart math or data transformation — every helper is split out
-// into focused modules (see "SPLIT MODULES" below) to ensure readability.
-//
-// WHAT THIS COMPONENT DOES
-// ------------------------
-//   1. Chart lifecycle – creates the chart + candle/volume series the first
-//      time (recreated only on theme / precision / symbol change; the chart
-//      deliberately PERSISTS across timeframe switches so drawings never blink).
-//   2. Live data       – paints server CandleUpdate / tick / bid-ask streams,
-//      restores the legend after crosshair leave, runs a staleness watchdog.
-//   3. History (infinite scroll) – subscribes a load-more handler that prepends
-//      older candles when the user scrolls to the left edge.
-//   4. Drawings        – creates the DrawingToolsManager, syncs tool/mode/equity
-//      refs, clone / reorder / selection handlers, context menus and object tree.
-//   5. Overlays        – positions/orders price-lines, SL/TP drag map, challenge
-//      rule levels, news popup, strategy-drawing layers, plugin primitives.
-//   6. UI state        – legend header, countdown, context menus, settings dialog,
-//      drawing tool rail.
-//
-// SPLIT MODULES
-// ------------------------------
-//   chartTypes.ts            – shared types for live data / legend / replay events
-//   chartHistoryLoader.ts    – scroll-triggered "infinite history" fetching
-//   chartPlugins.ts          – ISeriesPrimitive plugin factories + attach/detach
-//   chartRealtime.ts         – live series update / setData / bid-ask helpers
-//   chartPositionOverlays.ts – position / SL / TP / order price-line overlays
-//   chartReplayMarkers.ts    – replay trade-event marker builders
-//   chartHud.tsx             – presentational HUD overlays (legend, tools, object tree)
-//   chartData.ts             – candle → lightweight-charts rows + useChartData hook
-//
-// The remaining file is: props contract + effect wiring + JSX.
-// ═════════════════════════════════════════════════════════════════════════════
-
 import { useQueryClient } from "@tanstack/react-query";
 import {
   CandlestickSeries,
@@ -67,7 +29,6 @@ import { ChartContextMenu } from "./ChartContextMenu.tsx";
 import { DRAWING_STYLES_EVENT, getStyleDefaults } from "../pages/trading/drawingStyles.ts";
 import { formatCountdown, getMinMove } from "../pages/trading/utils.ts";
 import { useChartData } from "../pages/trading/chartData.ts";
-import { makeHistoryLoader, type LoadMoreState } from "../pages/trading/chartHistoryLoader.ts";
 
 import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../pages/trading/chartPlugins.ts";
 import { addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap } from "../pages/trading/chartPositionOverlays.ts";
@@ -76,14 +37,12 @@ import { applyBidAskLines, applyServerCandle, applyTick, legendFromSeries, reapp
 import { candleToLegend, type OhlcvLegend } from "../pages/trading/chartTypes.ts";
 import { useChallengeLevels } from "../pages/trading/useChallengeLevels.ts";
 import { useIndicators } from "../pages/trading/useIndicators.ts";
-import { useNewsOverlay } from "../pages/trading/useNewsOverlay.ts";
 import { usePriceWheelZoom } from "../pages/trading/usePriceWheelZoom.ts";
 import { useSlTpDrag } from "../pages/trading/useSlTpDrag.ts";
 import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHud.tsx";
 import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
 import { DrawingToolRail } from "./DrawingToolRail.tsx";
 import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
-import { NewsOverlay } from "./NewsOverlay.tsx";
 import { drawGapsImpulseStrategy } from "@/services/utils/strategy.ts";
 import { highlightOpenWindow } from "@/services/utils/openWindow.ts";
 
@@ -100,15 +59,11 @@ export interface ChartPanelProps {
   onAddDrawing: (d: DrawingLine) => void;
   onUpdateDrawing?: (d: DrawingLine) => void;
   onRemoveDrawing?: (id: string) => void;
-  /** Called when a drawing completes/cancels so the parent can disarm the tool. */
   onDrawingComplete?: () => void;
-  /** Alt+T/H/F/R keyboard shortcut pressed — arm the given tool. */
   onDrawingToolSelect?: (t: DrawingTool) => void;
   onUndoDrawing?: () => void;
   onRedoDrawing?: () => void;
-  /** Snap drawing anchors to candle O/H/L/C — off / weak (near) / strong (always). */
   magnetMode?: MagnetMode;
-  /** Keep the drawing tool armed after each placement. */
   stayInDrawingMode?: boolean;
   positions: Position[];
   orders: Order[];
@@ -135,28 +90,30 @@ export interface ChartPanelProps {
     ruleCode?: string;
   }>;
   activePlugins?: string[];
-  /** Toggle a chart plugin (session breaks etc.) — used by the settings dialog. */
   onTogglePlugin?: (id: string) => void;
-  /** Account equity — feeds the position tool's $-risk / size readout. */
   accountEquity?: number;
-  /** Active account — enables the challenge-aware level overlay. */
   accountId?: string | null;
-  /** Context-menu quick order at the clicked price (opens the confirm dialog). */
   onQuickOrder?: (side: "BUY" | "SELL", type: "LIMIT" | "STOP", price: number) => void;
-  /** Context-menu "Remove N drawings". */
   onClearDrawings?: () => void;
-  /** Context-menu "Remove N indicators". */
   onClearIndicators?: () => void;
-  /**
-   * Session replay is active — candles are a historical slice, so the
-   * staleness watchdog must not treat the old last-bar as a data gap.
-   */
   isReplaying?: boolean;
+  // ── NEW: infinite-history hooks ──
+  /** Called when the user scrolls near the oldest loaded bar. Parent fetches next page. */
+  onLoadMoreHistory?: () => void;
+  /** False once the parent's infinite query has no more pages. */
+  canLoadMoreHistory?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════
 // CHART PANEL (lightweight-charts)
 // ═══════════════════════════════════════════════════════════
+// The chart is created ONCE per (symbol, theme, pipDigits) and mutated
+// imperatively afterwards. Timeframe changes and appearance tweaks do NOT
+// recreate the chart — they call .applyOptions()/setData() instead.
+//
+// Historical extension: the parent owns the paginated source. When the user
+// scrolls near the left edge, we call `onLoadMoreHistory()`; the parent
+// fetches the next page and passes a bigger `candles` array back down.
 
 export function ChartPanel({
   candles,
@@ -191,6 +148,8 @@ export function ChartPanel({
   onClearDrawings,
   onClearIndicators,
   isReplaying = false,
+  onLoadMoreHistory,
+  canLoadMoreHistory = false,
 }: ChartPanelProps) {
   const queryClient = useQueryClient();
   const lastGapRefetchAtRef = useRef<number>(0);
@@ -198,86 +157,52 @@ export function ChartPanel({
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
 
-  // Scroll-triggered historical extension — older bars prepended as the user
-  // scrolls left past what the initial deep-fetch already loaded.
-  const [historicalExtra, setHistoricalExtra] = useState<Candle[]>([]);
-  const loadMoreRef = useRef<LoadMoreState>({
-    loading: false,
-    noMoreData: false,
-    lastFetchedBeforeMs: 0,
-    fetchFromMs: 0,
-  });
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLineRef = useRef<IPriceLine[]>([]);
   const drawingManagerRef = useRef<DrawingToolsManager | null>(null);
-  // Current timeframe mirrored in a ref so the persistent chart's history
-  // loader always fetches the active TF (the chart is no longer recreated on
-  // TF change — see the TF-change effect below).
   const timeframeRef = useRef(timeframe);
   const chartPluginsRef = useRef<ISeriesPrimitive<Time>[]>([]);
   const bidLineRef = useRef<IPriceLine | null>(null);
   const askLineRef = useRef<IPriceLine | null>(null);
   const midLineRef = useRef<IPriceLine | null>(null);
 
-  // ── SL/TP drag-to-edit state ──
+  // SL/TP drag-to-edit state
   const slTpLinesRef = useRef<SlTpMap>(new Map());
 
-  // Increments every time the chart instance is (re)created. Hooks that bind
-  // DOM/series listeners (SL/TP drag, challenge levels) depend on this so they
-  // re-bind against the live chart — without it they'd capture null refs on
-  // mount (the create-effect runs after them) and never attach.
+  // Bumps on every chart recreation so listener-binding hooks re-attach.
   const [chartEpoch, setChartEpoch] = useState(0);
 
-  // OHLCV legend state
+  // OHLCV legend + countdown state
   const [legend, setLegend] = useState<OhlcvLegend | null>(null);
-  // Candle countdown state
   const [countdown, setCountdown] = useState("");
-  // True once the legend has been restored to the latest bar after the crosshair
-  // left the series — prevents re-setting (and re-rendering) on every off-series
-  // mouse move while the cursor sits outside the plotted data.
   const legendRestoredRef = useRef(true);
 
   const chartPrefs = useChartPreferences();
-  // Theme palette with the user's Chart Settings color overrides applied.
-  // Everything downstream (chart options, bid/ask lines, position overlays,
-  // volume bars) reads from this merged object.
   const colors = useMemo(() => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs), [isDark, chartPrefs]);
 
-  // Reset historical extension whenever symbol or timeframe changes so stale
-  // out-of-range candles from the previous view are never mixed into new data.
-  useEffect(() => {
-    setHistoricalExtra([]);
-    loadMoreRef.current = {
-      loading: false,
-      noMoreData: false,
-      lastFetchedBeforeMs: 0,
-      fetchFromMs: 0,
-    };
-    lastGapRefetchAtRef.current = 0;
-  }, [selectedSymbol, timeframe]);
+  // Stable refs for the load-more callbacks — kept fresh every render so the
+  // range-change handler (installed once per chart) always sees current values.
+  const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
+  onLoadMoreHistoryRef.current = onLoadMoreHistory;
+  const canLoadMoreHistoryRef = useRef(canLoadMoreHistory);
+  canLoadMoreHistoryRef.current = canLoadMoreHistory;
 
-  // ── Drawing selection (floating toolbar / settings dialog / object tree) ──
+  // Drawing selection state
   const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([]);
   const [showDrawingSettings, setShowDrawingSettings] = useState(false);
   const [showObjectTree, setShowObjectTree] = useState(false);
   const [contextMenu, setContextMenu] = useState<{id: string; x: number; y: number} | null>(null);
 
-  // ── Chart-wide context menu + settings dialog ──
-  // When a right-click lands on a drawing the DrawingToolsManager opens the
-  // drawing menu and sets this flag synchronously (native listeners fire before
-  // React's delegated onContextMenu), so the chart menu stays closed.
+  // Chart-wide context menu + settings dialog
   const drawingMenuOpenedRef = useRef(false);
   const [chartMenu, setChartMenu] = useState<{x: number; y: number; price: number | null} | null>(null);
   const [showChartSettings, setShowChartSettings] = useState(false);
-  // The style toolbar / settings dialog only apply to a single selection.
   const selectedDrawing = useMemo(() => (selectedDrawingIds.length === 1 ? (drawings.find((d) => d.id === selectedDrawingIds[0]) ?? null) : null), [drawings, selectedDrawingIds]);
 
-  // Drawings actually shown on this chart: not hidden, and either visible on
-  // all timeframes or scoped to the current one.
+  // Drawings shown on this chart.
   const visibleDrawings = useMemo(() => drawings.filter((d) => !d.hidden && (d.visibility !== "tf" || d.createdTf === timeframe)), [drawings, timeframe]);
 
-  // Stable refs so the chart-create effect doesn't re-run on every parent render
-  // when these props are unstable (e.g. inline onAddDrawing).
+  // Stable refs so the chart-create effect doesn't re-run on unstable props.
   const drawingToolRef = useRef(drawingTool);
   const drawingsRef = useRef(visibleDrawings);
   const magnetRef = useRef(magnetMode);
@@ -291,7 +216,7 @@ export function ChartPanel({
   const onDrawingToolSelectRef = useRef(onDrawingToolSelect);
   const onUndoDrawingRef = useRef(onUndoDrawing);
   const onRedoDrawingRef = useRef(onRedoDrawing);
-  
+
   useEffect(() => {
     drawingToolRef.current = drawingTool;
     drawingManagerRef.current?.setTool(drawingTool);
@@ -336,7 +261,7 @@ export function ChartPanel({
     onRedoDrawingRef.current = onRedoDrawing;
   });
 
-  // Clone the selected drawing, offset 5 bars right so the copy is visible.
+  // Clone selected drawing, offset 5 bars right.
   const handleCloneDrawing = useCallback(() => {
     const d = selectedDrawing;
     if (!d) return;
@@ -349,7 +274,6 @@ export function ChartPanel({
     });
   }, [selectedDrawing, timeframe, onAddDrawing]);
 
-  // Z-order: bring to front = above the current max, send to back = below min.
   const handleReorderDrawing = useCallback(
     (d: DrawingLine, dir: "front" | "back") => {
       const zs = drawings.map((x) => x.zIndex ?? 0);
@@ -359,27 +283,19 @@ export function ChartPanel({
     [drawings, onUpdateDrawing],
   );
 
-  // Object-tree row click → select on the chart (no-op for drawings that are
-  // hidden or scoped off this timeframe, since the manager doesn't know them).
   const handleObjectTreeSelect = useCallback((d: DrawingLine) => {
     drawingManagerRef.current?.setSelection([d.id]);
   }, []);
 
   // ── Extracted hooks ────────────────────────────────────────
-  // Merge scroll-loaded historical extension (older) with the live data (newer).
-  // useChartData deduplicates by timestamp, so overlap is safe.
-  const allCandles = useMemo(() => (historicalExtra.length === 0 ? candles : [...historicalExtra, ...candles]), [historicalExtra, candles]);
-  const {chartData, volumeData} = useChartData(allCandles, colors);
-
-  const {newsConfig, setNewsConfig, showNewsConfigDialog, setShowNewsConfigDialog, newsPopup, setNewsPopup} = useNewsOverlay(containerRef, chartRef, selectedSymbol, isDark, chartData);
+  // `candles` already includes all loaded pages — no merge needed.
+  const {chartData, volumeData} = useChartData(candles, colors);
 
   const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
 
-  // TradingView-style: plain vertical wheel over the bars stretches them
-  // vertically (cursor-anchored price zoom); time zoom stays on pinch/Ctrl+wheel.
   usePriceWheelZoom(containerRef, chartRef, candleSeriesRef, chartEpoch);
 
-  // ── Challenge-aware rule levels (daily loss / max DD / profit target) ──
+  // Challenge-aware rule levels.
   const challengeFlags = useMemo(
     () => ({
       enabled: chartPrefs.challengeOverlay && !!accountId,
@@ -401,7 +317,6 @@ export function ChartPanel({
     chartEpoch,
   });
 
-  // ── Chart context-menu actions ──
   const handleChartContextMenu = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (drawingMenuOpenedRef.current) {
@@ -467,7 +382,6 @@ export function ChartPanel({
       markersPlugin.setMarkers([]);
       return;
     }
-    // lightweight-charts requires markers sorted by time ascending
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     markersPlugin.setMarkers(markers);
     return () => {
@@ -475,7 +389,7 @@ export function ChartPanel({
     };
   }, [replayTradeEvents, timeframe]);
 
-  // ── Candle close countdown timer ───────────────────────────
+  // ── Candle close countdown ─────────────────────────────────
   useEffect(() => {
     const intervalMs = TF_INTERVAL_MS[timeframe];
     if (!intervalMs || intervalMs >= 86_400_000) {
@@ -495,6 +409,7 @@ export function ChartPanel({
   }, [timeframe]);
 
   // ── Create / destroy the chart instance ────────────────────
+  // Runs on theme / pipDigits / symbol change — NOT timeframe.
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -576,12 +491,6 @@ export function ChartPanel({
         precision: pipDigits,
         minMove,
       },
-      // Hide the candle's own last-value label and default close price-line.
-      // Candle close is the mid price ((bid+ask)/2) — with a 1-pip spread that
-      // sits half a pip below Ask, so the mid label stacks visually next to
-      // the Ask label and rounds to the same 5-decimal string. The explicit
-      // Bid/Ask price lines below are the authoritative right-edge prices for
-      // trading; the mid label is redundant and creates the "misaligned" look.
       lastValueVisible: false,
       priceLineVisible: false,
       priceLineWidth: 1,
@@ -590,7 +499,6 @@ export function ChartPanel({
     });
     candleSeriesRef.current = candleSeries;
 
-    // Volume histogram at the bottom of the chart
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: {type: "volume"},
       priceScaleId: "volume",
@@ -600,7 +508,6 @@ export function ChartPanel({
     });
     volumeSeriesRef.current = volumeSeries;
 
-    // Subscribe to crosshair move for OHLCV legend
     chart.subscribeCrosshairMove((param) => {
       if (!param?.time) {
         restoreLegendOnLeave(legendRestoredRef, lastCandleRef, legendVolRef, setLegend);
@@ -614,7 +521,6 @@ export function ChartPanel({
       }
     });
 
-    // Handle resize
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         chart.applyOptions({
@@ -625,8 +531,6 @@ export function ChartPanel({
     });
     ro.observe(containerRef.current);
 
-    // Interactive drawing layer (place / preview / select / drag / delete) —
-    // callbacks go through refs so the create-effect doesn't depend on them.
     const drawingManager = new DrawingToolsManager({
       chart,
       series: candleSeries,
@@ -664,23 +568,22 @@ export function ChartPanel({
     drawingManager.setStayInDrawingMode(stayInModeRef.current);
     drawingManagerRef.current = drawingManager;
 
-    // Subscribe to time-scale scrolling so we can load older bars when the
-    // user scrolls past the leftmost loaded candle (infinite history pattern).
-    // `historyLoadCancelled` guards against a stale fetch resolving after a
-    // symbol/timeframe/theme change: the cleanup sets it to true before
-    // unsubscribing so any in-flight `onLoaded` callback is silently dropped.
-    let historyLoadCancelled = false;
-    const handleRangeChange = makeHistoryLoader(selectedSymbol, timeframeRef, candleSeriesRef, loadMoreRef, (bars) => {
-      if (!historyLoadCancelled) setHistoricalExtra((prev) => [...bars, ...prev]);
-    });
-    chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    // ── Infinite-history scroll trigger ──
+    // The parent owns the paginated source. When the user is within ~20 bars
+    // of the oldest loaded bar, ask for the next page via the ref-based
+    // callback (installed once per chart, always reads the latest prop).
+    const handleRangeChange = (range: { from: number; to: number } | null) => {
+      if (!range) return;
+      if (range.from < 20 && canLoadMoreHistoryRef.current) {
+        onLoadMoreHistoryRef.current?.();
+      }
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange as never);
 
-    // Signal listener-binding hooks that a live chart instance now exists.
     setChartEpoch((e) => e + 1);
 
     return () => {
-      historyLoadCancelled = true;
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange as never);
       ro.disconnect();
       drawingManager.destroy();
       drawingManagerRef.current = null;
@@ -694,26 +597,15 @@ export function ChartPanel({
       askLineRef.current = null;
       midLineRef.current = null;
       chartPluginsRef.current = [];
-      // Clear per-chart state so it doesn't bleed into the recreated chart
-      // (theme toggle also destroys/recreates the chart instance).
       lastCandleRef.current = null;
       legendVolRef.current = 0;
       liveCandleTsRef.current = 0;
-      loadMoreRef.current = {
-        loading: false,
-        noMoreData: false,
-        lastFetchedBeforeMs: 0,
-        fetchFromMs: 0,
-      };
       lastGapRefetchAtRef.current = 0;
     };
-  }, [isDark, pipDigits, colors.background, colors.text, colors.grid, colors.crosshair, colors.watermark, colors.up, colors.down, selectedSymbol]); // Re-create on theme / precision / symbol change — NOT timeframe (the
-  // chart persists across TF switches so drawings never blink out; the
-  // TF-change effect below updates the live state in place, TradingView-style).
+  }, [isDark, pipDigits, colors.background, colors.text, colors.grid, colors.crosshair, colors.watermark, colors.up, colors.down, selectedSymbol]);
 
   // ── Live appearance settings (no chart recreation) ──
   useEffect(() => {
-    // `colors` already carries the user's overrides (mergeChartColors).
     const up = colors.up;
     const down = colors.down;
     candleSeriesRef.current?.applyOptions({
@@ -748,29 +640,21 @@ export function ChartPanel({
 
   useEffect(() => {
     const series = candleSeriesRef.current;
-    if (!series || allCandles.length === 0) return;
+    if (!series || candles.length === 0) return;
 
     detachPrimitiveArrays(series, [strategyPrimitivesRef.current, dayOpenBandRef.current, dayLevelsRef.current]);
 
-    strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, allCandles);
-    dayOpenBandRef.current = highlightOpenWindow(series, allCandles, {
+    strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, candles);
+    dayOpenBandRef.current = highlightOpenWindow(series, candles, {
       minutes: 15,
       timeZone: "America/New_York",
       fill: "rgba(255, 200, 50, 0.10)",
     });
-    // dayLevelsRef.current = drawDayLevels(series, allCandles, {
-    //   timeZone: "America/New_York",
-    //   highColor: "#ffffff",
-    //   lowColor: "#ffffff",
-    //   lineWidth: 2,
-    // });
-  }, [allCandles, chartEpoch]);
+  }, [candles, chartEpoch]);
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  // Timeframe change — the chart instance is NOT recreated (so drawings stay
-  // attached); instead we update the persistent chart's options and re-point
-  // the drawing manager's interval/createdTf at the new TF in place.
+  // ── Timeframe change (in-place) ──
   useEffect(() => {
     timeframeRef.current = timeframe;
     chartRef.current?.applyOptions({
@@ -789,10 +673,9 @@ export function ChartPanel({
       },
       localization: {
         timeFormatter: (time: any) => {
-          // `time` here is the *shifted* UTC timestamp, so just format as UTC.
           const d = new Date((time as number) * 1000);
           return d.toLocaleString("it-IT", {
-            timeZone: "UTC", // <- important: shifted time is already Rome
+            timeZone: "UTC",
             year: "numeric",
             month: "short",
             day: "2-digit",
@@ -809,20 +692,9 @@ export function ChartPanel({
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const lastLoadKeyRef = useRef<string>("");
   const latestLiveCandleRef = useRef<typeof liveCandle | undefined>(undefined);
-  // Authoritative server candle timestamp, normalised to unix MILLISECONDS —
-  // used to ignore ticks that pre-date the latest server CandleUpdate (those can
-  // pollute H/L after a WS flush delivers a buffered tick *after* its
-  // corresponding aggregated candle). Stored in ms so the tick guard compares
-  // like-for-like regardless of whether the server emits seconds or ms.
   const liveCandleTsRef = useRef<number>(0);
-  // Last known volume — needed to keep the volume bar coloured during tick
-  // smoothing without overwriting the value with 0.
   const legendVolRef = useRef<number>(0);
 
-  // Bundle the refs/config the real-time helpers need. Memoised so the live
-  // effects can depend on `makeRtCtx` directly — it changes identity exactly when
-  // colors / timeframe / symbol / queryClient change, so re-run timing matches
-  // listing those values individually (refs and setLegend are stable).
   const makeRtCtx = useCallback(
     (series: ISeriesApi<"Candlestick">): RtCtx => ({
       series,
@@ -843,12 +715,13 @@ export function ChartPanel({
     [colors, timeframe, selectedSymbol, queryClient],
   );
 
-  // Keep latest live candle in a ref (avoids stale closure in setData effect)
   useEffect(() => {
     latestLiveCandleRef.current = liveCandle;
   }, [liveCandle]);
 
-  // Update candle data from server (historical fetch / periodic sync)
+  // ── Bulk candle load (initial fetch / periodic refetch) ──
+  // NOTE: chartData grows as pages are appended. `isNewChart` distinguishes a
+  // fresh symbol/TF (fit viewport) from a growing dataset (preserve viewport).
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || chartData.length === 0) return;
@@ -864,7 +737,6 @@ export function ChartPanel({
 
     const buffered = latestLiveCandleRef.current;
     if (!isNewChart) {
-      // Periodic refetch — preserve viewport, re-apply latest live data.
       reapplyLive(buffered, ctx);
       return;
     }
@@ -874,7 +746,6 @@ export function ChartPanel({
     liveCandleTsRef.current = 0;
     replayBufferedLive(buffered, chartData, ctx);
 
-    // the chart needs autoscale: true at the start to center the bars but as soon as it's loaded, we disabled it to enable the free panning gesture
     if (chartRef.current) {
       chartRef.current.priceScale("right").applyOptions({autoScale: false});
     }
@@ -882,31 +753,19 @@ export function ChartPanel({
   }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx]);
 
   // ── Real-time candle updates ──────────────────────────
-
-  // Primary: server-aggregated CandleUpdate events (OHLCV from candle aggregator).
-  // No client-side throttle — the WS layer already batches at ~50ms; throttling
-  // again here just adds latency without reducing render work (lightweight-charts
-  // batches DOM writes internally and series.update is O(1)). The guard below
-  // skips painting until history exists so a live WS candle can't render alone.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !liveCandle || !lastCandleRef.current) return;
     applyServerCandle(liveCandle, makeRtCtx(series));
   }, [liveCandle, makeRtCtx]);
 
-  // Secondary: tick-based smoothing between server CandleUpdate pulses.
-  // Server CandleUpdate is authoritative — when it arrives next it will
-  // overwrite this tick-merged bar via series.update.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !tick) return;
     applyTick(tick, makeRtCtx(series));
   }, [tick, makeRtCtx]);
 
-  // ── Line-cross price alerts (client-side, in-session) ──────────
-  // Fire a toast + beep when the live mid price crosses an alert-enabled
-  // horizontal line or trendline. Drawings are read from a ref so this runs
-  // only on tick changes.
+  // ── Line-cross price alerts ──────────────────────────────
   const alertMidRef = useRef<number | null>(null);
   const alertFiredRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
@@ -923,14 +782,8 @@ export function ChartPanel({
     }
   }, [tick, selectedSymbol, pipDigits]);
 
-  // ── Staleness watchdog ────────────────────────────────────────
-  // Guards against the case where CandleUpdates stop arriving entirely
-  // (data-provider disconnect, aggregator restart). Both the live-candle and
-  // tick effects only run when their props change, so this interval is the
-  // only recovery path when neither prop is updating.
+  // ── Staleness watchdog ────────────────────────────────────
   useEffect(() => {
-    // Replay shows a historical slice — its last bar is hours or days old by
-    // design, so the staleness check would fire a refetch loop. Skip it.
     if (isReplaying) return;
     const intervalSec = (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000;
     const id = setInterval(() => {
@@ -943,8 +796,6 @@ export function ChartPanel({
   }, [selectedSymbol, timeframe, queryClient, isReplaying]);
 
   // ── Chart plugin overlays ──────────────────────────────────
-  // Re-runs when active plugins change or the chart is recreated (isDark /
-  // symbol / timeframe), so primitives are always attached to the live series.
   const symbolCategory = symbolInfo?.category;
   useEffect(() => {
     if (!candleSeriesRef.current) return;
@@ -955,8 +806,6 @@ export function ChartPanel({
   }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory]);
 
   // ── Live bid/ask price tracking lines ──────────────────────
-  // applyBidAskLines moves the existing price lines in-place (applyOptions) or
-  // creates them — remove+create would force two full chart redraws per tick.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
@@ -988,7 +837,6 @@ export function ChartPanel({
 
   return (
     <div className="relative w-full h-full">
-      {/* OHLCV Legend Overlay */}
       <ChartLegendHeader
         selectedSymbol={selectedSymbol}
         timeframe={timeframe}
@@ -1017,7 +865,7 @@ export function ChartPanel({
         </div>
       )}
 
-      {/* Selected-drawing floating toolbar / settings dialog */}
+      {/* Selected-drawing toolbar / settings dialog */}
       <DrawingOverlays
         drawing={selectedDrawing}
         showSettings={showDrawingSettings}
@@ -1029,6 +877,7 @@ export function ChartPanel({
         onCloseSettings={() => setShowDrawingSettings(false)}
       />
 
+      {/* Per-drawing context menu */}
       {contextMenu && selectedDrawing && (
         <DrawingContextMenu
           drawing={selectedDrawing}
@@ -1044,7 +893,7 @@ export function ChartPanel({
         />
       )}
 
-      {/* Object tree: toggle button + panel listing every drawing on the symbol */}
+      {/* Object tree */}
       <ObjectTreeOverlay
         drawings={drawings}
         selectedIds={selectedDrawingIds}
@@ -1058,20 +907,7 @@ export function ChartPanel({
         onReorder={handleReorderDrawing}
       />
 
-      {/* News overlay (popup, config dialog, button) */}
-      <NewsOverlay
-        newsConfig={newsConfig}
-        setNewsConfig={setNewsConfig}
-        showNewsConfigDialog={showNewsConfigDialog}
-        setShowNewsConfigDialog={setShowNewsConfigDialog}
-        newsPopup={newsPopup}
-        setNewsPopup={setNewsPopup}
-        isDark={isDark}
-        pipDigits={pipDigits}
-        containerRef={containerRef}
-      />
-
-      {/* Chart-wide right-click menu (TradingView-style) */}
+      {/* Chart-wide context menu */}
       {chartMenu && (
         <ChartContextMenu
           x={chartMenu.x}
@@ -1101,14 +937,11 @@ export function ChartPanel({
         isDark={isDark}
         activePlugins={activePlugins}
         onTogglePlugin={onTogglePlugin}
-        onOpenNewsConfig={() => setShowNewsConfigDialog(true)}
         hasAccount={!!accountId}
       />
 
-      {/* Chart container — cursor is managed imperatively by DrawingToolsManager */}
       <div ref={containerRef} className="w-full h-full" onContextMenu={handleChartContextMenu} />
 
-      {/* Left vertical tool rail (TradingView-style grouped flyouts) */}
       <DrawingToolRail drawingTool={drawingTool} onDrawingTool={(t) => onDrawingToolSelect?.(t)} />
     </div>
   );
