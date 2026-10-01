@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import {
   type CandlestickData,
   createSeriesMarkers, type IChartApi,
@@ -10,21 +9,16 @@ import {
 } from "lightweight-charts";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChartPreferences } from "../hooks/useChartPreferences.ts";
-import { detectCrossings, playAlertBeep } from "../lib/chart-plugins/drawing-tools/line-alerts.ts";
 import type { IndicatorType } from "../lib/indicators.ts";
 import { cn } from "../lib/utils.ts";
 import type { Candle, Order, Position, Symbol } from "../services/schemas.ts";
 import { toast } from "../services/toast.ts";
 import { CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe } from "../pages/trading/constants.ts";
 import { ChartContextMenu } from "./ChartContextMenu.tsx";
-import { formatCountdown } from "../pages/trading/utils.ts";
-import { useChartData } from "../pages/trading/chartData.ts";
 
 import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../pages/trading/chartPlugins.ts";
 import { addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap } from "../pages/trading/chartPositionOverlays.ts";
 import { buildReplayMarker } from "../pages/trading/chartReplayMarkers.ts";
-import { applyBidAskLines, applyServerCandle, applyTick, legendFromSeries, reapplyLive, replayBufferedLive, requestGapRefetch, scheduleStaleRefetch, scrollOrFit, type RtCtx } from "../pages/trading/chartRealtime.ts";
-import { type OhlcvLegend } from "../pages/trading/chartTypes.ts";
 import { useChallengeLevels } from "../pages/trading/useChallengeLevels.ts";
 import { useIndicators } from "../pages/trading/useIndicators.ts";
 import { usePriceWheelZoom } from "../pages/trading/usePriceWheelZoom.ts";
@@ -36,6 +30,8 @@ import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
 import { drawGapsImpulseStrategy } from "@/services/utils/strategy.ts";
 import { highlightOpenWindow } from "@/services/utils/openWindow.ts";
 import { ChartRefs, useChartInstance } from "@/pages/trading/hooks/useChartInstance.ts";
+import { useChartLegend } from "@/pages/trading/hooks/useChartLegend.ts";
+import { useChartDataFlow } from "@/pages/trading/hooks/useChartDataFlow.ts";
 
 // ── Props ────────────────────────────────────────────────────
 
@@ -88,18 +84,18 @@ export interface ChartPanelProps {
   onClearDrawings?: () => void;
   onClearIndicators?: () => void;
   isReplaying?: boolean;
-  /** Called when the user scrolls near the oldest loaded bar. Parent fetches next page. */
   onLoadMoreHistory?: () => void;
-  /** False once the parent's infinite query has no more pages. */
   canLoadMoreHistory?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════
 // CHART PANEL (lightweight-charts)
 // ═══════════════════════════════════════════════════════════
-// The chart instance itself (chart + series + drawing manager) lives in
-// useChartInstance. Everything below consumes those refs and drives data,
-// overlays, appearance, and UI state on top.
+// The chart instance lives in useChartInstance.
+// The OHLCV legend + countdown live in useChartLegend.
+// The realtime data pipeline (bulk load, live candle, ticks, bid/ask,
+// alerts, staleness watchdog) lives in useChartDataFlow.
+// What remains here: UI state, overlays, appearance, and rendering.
 
 export function ChartPanel({
   candles,
@@ -137,8 +133,6 @@ export function ChartPanel({
   onLoadMoreHistory,
   canLoadMoreHistory = false,
 }: ChartPanelProps) {
-  const queryClient = useQueryClient();
-
   // ── Chart-instance refs (owned here, wired by the hook) ──
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -149,24 +143,16 @@ export function ChartPanel({
     [],
   );
 
-  // ── Refs used by overlays / realtime / alerts ──
-  const lastGapRefetchAtRef = useRef<number>(0);
-  const priceLineRef = useRef<IPriceLine[]>([]);
-  const chartPluginsRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const bidLineRef = useRef<IPriceLine | null>(null);
-  const askLineRef = useRef<IPriceLine | null>(null);
-  const midLineRef = useRef<IPriceLine | null>(null);
-  const slTpLinesRef = useRef<SlTpMap>(new Map());
+  // ── Refs shared between useChartLegend + useChartDataFlow ──
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
-  const lastLoadKeyRef = useRef<string>("");
-  const latestLiveCandleRef = useRef<typeof liveCandle | undefined>(undefined);
-  const liveCandleTsRef = useRef<number>(0);
   const legendVolRef = useRef<number>(0);
 
-  // ── UI state ──
-  const [legend, setLegend] = useState<OhlcvLegend | null>(null);
-  const [countdown, setCountdown] = useState("");
+  // ── Refs still owned by ChartPanel (overlays / drag / plugins) ──
+  const priceLineRef = useRef<IPriceLine[]>([]);
+  const chartPluginsRef = useRef<ISeriesPrimitive<Time>[]>([]);
+  const slTpLinesRef = useRef<SlTpMap>(new Map());
 
+  // ── UI state ──
   const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([]);
   const [showDrawingSettings, setShowDrawingSettings] = useState(false);
   const [showObjectTree, setShowObjectTree] = useState(false);
@@ -191,9 +177,7 @@ export function ChartPanel({
     [drawings, timeframe],
   );
 
-  // ── Stable refs for the drawing-tool callbacks. These are the values the
-  //    hook reads through its drawing manager, kept fresh on every render
-  //    so the create-effect never needs to re-run when they change. ──
+  // ── Stable refs for the drawing-tool callbacks ──
   const onAddDrawingRef = useRef(onAddDrawing);
   onAddDrawingRef.current = onAddDrawing;
   const onUpdateDrawingRef = useRef(onUpdateDrawing);
@@ -209,15 +193,14 @@ export function ChartPanel({
   const onRedoDrawingRef = useRef(onRedoDrawing);
   onRedoDrawingRef.current = onRedoDrawing;
 
-  // ── Stable callbacks passed to the hook (all backed by useState setters,
-  //    which React guarantees never change identity). ──
+  // ── Stable callbacks passed to the hook ──
   const onDrawingMenuOpened = useCallback(() => { drawingMenuOpenedRef.current = true; }, []);
   const onDrawingContextMenu = useCallback((id: string, x: number, y: number) => {
     setSelectedDrawingIds([id]);
     setContextMenu({id, x, y});
   }, []);
 
-  // ── Chart instance (created + managed by the hook) ──
+  // ── 1. Chart instance ──
   const { chartEpoch, drawingManagerRef } = useChartInstance({
     containerRef,
     chartRefs,
@@ -252,9 +235,35 @@ export function ChartPanel({
     canLoadMoreHistory,
   });
 
-  // ── Extracted hooks ──
-  const {chartData, volumeData} = useChartData(candles, colors);
+  // ── 2. Legend + countdown ──
+  const { legend, countdown, setLegend } = useChartLegend({
+    chartRefs,
+    chartEpoch,
+    timeframe,
+    lastCandleRef,
+    legendVolRef,
+  });
 
+  // ── 3. Realtime data pipeline (returns chart-ready arrays) ──
+  const { chartData } = useChartDataFlow({
+    chartRefs,
+    colors,
+    timeframe,
+    selectedSymbol,
+    isReplaying,
+    liveCandle,
+    tick,
+    candles,
+    pipDigits,
+    drawings: visibleDrawings,
+    showBidLine: chartPrefs.showBidLine,
+    showAskLine: chartPrefs.showAskLine,
+    setLegend,
+    lastCandleRef,
+    legendVolRef,
+  });
+
+  // ── Extracted hooks ──
   const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
 
   usePriceWheelZoom(containerRef, chartRef, candleSeriesRef, chartEpoch);
@@ -356,7 +365,7 @@ export function ChartPanel({
 
   useIndicators(chartRef, candleSeriesRef, chartData, activeIndicators, isDark);
 
-  // ── Replay trade event markers ─────────────────────────────
+  // ── Replay trade event markers ──
   useEffect(() => {
     const series = candleSeriesRef.current;
     const markers: SeriesMarker<Time>[] = [];
@@ -378,26 +387,7 @@ export function ChartPanel({
     };
   }, [replayTradeEvents, timeframe]);
 
-  // ── Candle close countdown ─────────────────────────────────
-  useEffect(() => {
-    const intervalMs = TF_INTERVAL_MS[timeframe];
-    if (!intervalMs || intervalMs >= 86_400_000) {
-      setCountdown("");
-      return;
-    }
-    const tick = () => {
-      const now = Date.now();
-      const currentBucketStart = Math.floor(now / intervalMs) * intervalMs;
-      const nextBucketStart = currentBucketStart + intervalMs;
-      const remainingSec = Math.max(0, (nextBucketStart - now) / 1000);
-      setCountdown(formatCountdown(remainingSec));
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [timeframe]);
-
-  // ── Live appearance settings (no chart recreation) ──
+  // ── Live appearance settings ──
   useEffect(() => {
     const up = colors.up;
     const down = colors.down;
@@ -478,106 +468,6 @@ export function ChartPanel({
     drawingManagerRef.current?.updateTimeframe(timeframe, (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000);
   }, [timeframe, drawingManagerRef]);
 
-  // ── Realtime context bundle ──
-  const makeRtCtx = useCallback(
-    (series: ISeriesApi<"Candlestick">): RtCtx => ({
-      series,
-      volume: volumeSeriesRef.current,
-      lastCandle: lastCandleRef,
-      liveCandleTs: liveCandleTsRef,
-      legendVol: legendVolRef,
-      gapAt: lastGapRefetchAtRef,
-      bidLine: bidLineRef,
-      askLine: askLineRef,
-      midLine: midLineRef,
-      colors,
-      timeframe,
-      symbol: selectedSymbol,
-      qc: queryClient,
-      setLegend,
-    }),
-    [colors, timeframe, selectedSymbol, queryClient],
-  );
-
-  useEffect(() => {
-    latestLiveCandleRef.current = liveCandle;
-  }, [liveCandle]);
-
-  // ── Bulk candle load ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series || chartData.length === 0) return;
-
-    const ctx = makeRtCtx(series);
-    const loadKey = `${selectedSymbol}:${timeframe}`;
-    const isNewChart = lastLoadKeyRef.current !== loadKey;
-
-    series.setData(chartData);
-    volumeSeriesRef.current?.setData(volumeData);
-    lastCandleRef.current = chartData[chartData.length - 1] ?? null;
-    setLegend(legendFromSeries(chartData, volumeData));
-
-    const buffered = latestLiveCandleRef.current;
-    if (!isNewChart) {
-      reapplyLive(buffered, ctx);
-      return;
-    }
-
-    scrollOrFit(chartRef.current, chartData.length);
-    lastLoadKeyRef.current = loadKey;
-    liveCandleTsRef.current = 0;
-    replayBufferedLive(buffered, chartData, ctx);
-
-    if (chartRef.current) {
-      chartRef.current.priceScale("right").applyOptions({autoScale: false});
-    }
-    return scheduleStaleRefetch(chartData, ctx);
-  }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx]);
-
-  // ── Realtime candle from server ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series || !liveCandle || !lastCandleRef.current) return;
-    applyServerCandle(liveCandle, makeRtCtx(series));
-  }, [liveCandle, makeRtCtx]);
-
-  // ── Tick-level smoothing ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series || !tick) return;
-    applyTick(tick, makeRtCtx(series));
-  }, [tick, makeRtCtx]);
-
-  // ── Line-cross price alerts ──
-  const alertMidRef = useRef<number | null>(null);
-  const alertFiredRef = useRef<Map<string, number>>(new Map());
-  useEffect(() => {
-    if (!tick) return;
-    const mid = (tick.bid + tick.ask) / 2;
-    const prev = alertMidRef.current;
-    alertMidRef.current = mid;
-    if (prev === null) return;
-    const nowSec = Math.floor(tick.timestamp / 1000);
-    const crossed = detectCrossings(visibleDrawings, prev, mid, nowSec, alertFiredRef.current);
-    for (const d of crossed) {
-      toast.info("Price alert", d.alertMessage ?? `${selectedSymbol} crossed your ${d.type} @ ${mid.toFixed(pipDigits)}`);
-      playAlertBeep();
-    }
-  }, [tick, selectedSymbol, pipDigits, visibleDrawings]);
-
-  // ── Staleness watchdog ──
-  useEffect(() => {
-    if (isReplaying) return;
-    const intervalSec = (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000;
-    const id = setInterval(() => {
-      if (!lastCandleRef.current) return;
-      const staleSec = Date.now() / 1000 - (lastCandleRef.current.time as number);
-      if (staleSec < intervalSec * 2) return;
-      requestGapRefetch(lastGapRefetchAtRef, queryClient, selectedSymbol, timeframe);
-    }, 30_000);
-    return () => clearInterval(id);
-  }, [selectedSymbol, timeframe, queryClient, isReplaying]);
-
   // ── Chart plugin overlays ──
   const symbolCategory = symbolInfo?.category;
   useEffect(() => {
@@ -587,13 +477,6 @@ export function ChartPanel({
     chartPluginsRef.current = [];
     attachPlugins(series, activePlugins, {isDark, timeframe, symbolCategory}, chartPluginsRef.current);
   }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory]);
-
-  // ── Bid/ask price lines ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series) return;
-    applyBidAskLines(tick, {showBidLine: chartPrefs.showBidLine, showAskLine: chartPrefs.showAskLine}, makeRtCtx(series));
-  }, [tick, chartPrefs.showBidLine, chartPrefs.showAskLine, makeRtCtx]);
 
   // ── Position/order overlays ──
   useEffect(() => {
