@@ -1,11 +1,10 @@
 import {
   type CandlestickData,
-  createSeriesMarkers, type IChartApi,
-  type IPriceLine,
+  createSeriesMarkers,
+  type IChartApi,
   type ISeriesApi,
-  type ISeriesPrimitive,
   type SeriesMarker,
-  type Time
+  type Time,
 } from "lightweight-charts";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChartPreferences } from "../hooks/useChartPreferences.ts";
@@ -16,10 +15,7 @@ import { toast } from "../services/toast.ts";
 import { CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe } from "../pages/trading/constants.ts";
 import { ChartContextMenu } from "./ChartContextMenu.tsx";
 
-import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../pages/trading/chartPlugins.ts";
-import { addOrderOverlay, addPositionOverlay, clearPriceLines, type OverlayOpts, type SlTpMap } from "../pages/trading/chartPositionOverlays.ts";
 import { buildReplayMarker } from "../pages/trading/chartReplayMarkers.ts";
-import { useChallengeLevels } from "../pages/trading/useChallengeLevels.ts";
 import { useIndicators } from "../pages/trading/useIndicators.ts";
 import { usePriceWheelZoom } from "../pages/trading/usePriceWheelZoom.ts";
 import { useSlTpDrag } from "../pages/trading/useSlTpDrag.ts";
@@ -27,11 +23,10 @@ import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHu
 import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
 import { DrawingToolRail } from "./DrawingToolRail.tsx";
 import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
-import { drawGapsImpulseStrategy } from "@/services/utils/strategy.ts";
-import { highlightOpenWindow } from "@/services/utils/openWindow.ts";
 import { ChartRefs, useChartInstance } from "@/pages/trading/hooks/useChartInstance.ts";
 import { useChartLegend } from "@/pages/trading/hooks/useChartLegend.ts";
 import { useChartDataFlow } from "@/pages/trading/hooks/useChartDataFlow.ts";
+import { useChartOverlays } from "@/pages/trading/hooks/useChartOverlay.ts";
 
 // ── Props ────────────────────────────────────────────────────
 
@@ -91,11 +86,11 @@ export interface ChartPanelProps {
 // ═══════════════════════════════════════════════════════════
 // CHART PANEL (lightweight-charts)
 // ═══════════════════════════════════════════════════════════
-// The chart instance lives in useChartInstance.
-// The OHLCV legend + countdown live in useChartLegend.
-// The realtime data pipeline (bulk load, live candle, ticks, bid/ask,
-// alerts, staleness watchdog) lives in useChartDataFlow.
-// What remains here: UI state, overlays, appearance, and rendering.
+// useChartInstance     — chart + series + drawing manager lifecycle
+// useChartLegend       — crosshair → OHLCV legend + countdown
+// useChartDataFlow     — bulk setData, live candle, ticks, bid/ask, alerts
+// useChartOverlays     — position/order lines, plugins, strategy primitives
+// What remains here: UI state, appearance, indicators, and rendering.
 
 export function ChartPanel({
   candles,
@@ -133,7 +128,7 @@ export function ChartPanel({
   onLoadMoreHistory,
   canLoadMoreHistory = false,
 }: ChartPanelProps) {
-  // ── Chart-instance refs (owned here, wired by the hook) ──
+  // ── Chart-instance refs ──
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -146,11 +141,6 @@ export function ChartPanel({
   // ── Refs shared between useChartLegend + useChartDataFlow ──
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const legendVolRef = useRef<number>(0);
-
-  // ── Refs still owned by ChartPanel (overlays / drag / plugins) ──
-  const priceLineRef = useRef<IPriceLine[]>([]);
-  const chartPluginsRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const slTpLinesRef = useRef<SlTpMap>(new Map());
 
   // ── UI state ──
   const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([]);
@@ -244,7 +234,7 @@ export function ChartPanel({
     legendVolRef,
   });
 
-  // ── 3. Realtime data pipeline (returns chart-ready arrays) ──
+  // ── 3. Realtime data pipeline ──
   const { chartData } = useChartDataFlow({
     chartRefs,
     colors,
@@ -263,32 +253,30 @@ export function ChartPanel({
     legendVolRef,
   });
 
+  // ── 4. Overlays (returns slTpLinesRef for the drag hook below) ──
+  const { slTpLinesRef } = useChartOverlays({
+    chartRefs,
+    chartEpoch,
+    colors,
+    selectedSymbol,
+    timeframe,
+    symbolInfo,
+    positions,
+    orders,
+    accountId,
+    accountEquity,
+    tick,
+    candles,
+    chartData,
+    activePlugins,
+    isDark,
+    chartPrefs,
+  });
+
   // ── Extracted hooks ──
   const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
 
   usePriceWheelZoom(containerRef, chartRef, candleSeriesRef, chartEpoch);
-
-  // Challenge-aware rule levels.
-  const challengeFlags = useMemo(
-    () => ({
-      enabled: chartPrefs.challengeOverlay && !!accountId,
-      dailyLoss: chartPrefs.challengeDailyLossLine,
-      maxDrawdown: chartPrefs.challengeMaxDrawdownLine,
-      profitTarget: chartPrefs.challengeProfitTargetLine,
-    }),
-    [chartPrefs.challengeOverlay, chartPrefs.challengeDailyLossLine, chartPrefs.challengeMaxDrawdownLine, chartPrefs.challengeProfitTargetLine, accountId],
-  );
-  useChallengeLevels({
-    accountId,
-    selectedSymbol,
-    positions,
-    tick,
-    contractSize: symbolInfo?.contractSize || 100000,
-    accountEquity,
-    candleSeriesRef,
-    flags: challengeFlags,
-    chartEpoch,
-  });
 
   // ── Handlers ──
   const handleChartContextMenu = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
@@ -416,25 +404,6 @@ export function ChartPanel({
     });
   }, [chartPrefs.showGrid, chartEpoch]);
 
-  // ── Strategy primitives ──
-  const strategyPrimitivesRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const dayOpenBandRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const dayLevelsRef = useRef<ISeriesPrimitive<Time>[]>([]);
-
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series || candles.length === 0) return;
-
-    detachPrimitiveArrays(series, [strategyPrimitivesRef.current, dayOpenBandRef.current, dayLevelsRef.current]);
-
-    strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, candles);
-    dayOpenBandRef.current = highlightOpenWindow(series, candles, {
-      minutes: 15,
-      timeZone: "America/New_York",
-      fill: "rgba(255, 200, 50, 0.10)",
-    });
-  }, [candles, chartEpoch]);
-
   // ── Timeframe change (in-place) ──
   useEffect(() => {
     chartRef.current?.applyOptions({
@@ -467,39 +436,6 @@ export function ChartPanel({
     });
     drawingManagerRef.current?.updateTimeframe(timeframe, (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000);
   }, [timeframe, drawingManagerRef]);
-
-  // ── Chart plugin overlays ──
-  const symbolCategory = symbolInfo?.category;
-  useEffect(() => {
-    if (!candleSeriesRef.current) return;
-    const series = candleSeriesRef.current;
-    detachPlugins(series, chartPluginsRef.current);
-    chartPluginsRef.current = [];
-    attachPlugins(series, activePlugins, {isDark, timeframe, symbolCategory}, chartPluginsRef.current);
-  }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory]);
-
-  // ── Position/order overlays ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series) return;
-    const lines = priceLineRef.current;
-    clearPriceLines(series, lines);
-    priceLineRef.current = [];
-    slTpLinesRef.current.clear();
-    if (!chartPrefs.overlayPositionsOnChart) return;
-
-    const opts: OverlayOpts = {
-      symbol: selectedSymbol,
-      colors,
-      contractSize: symbolInfo?.contractSize || 100000,
-    };
-    for (const pos of positions) {
-      addPositionOverlay(series, pos, opts, priceLineRef.current, slTpLinesRef.current);
-    }
-    for (const ord of orders) {
-      addOrderOverlay(series, ord, selectedSymbol, colors.orderLine, priceLineRef.current);
-    }
-  }, [positions, orders, selectedSymbol, chartData, symbolInfo, colors, chartPrefs.overlayPositionsOnChart]);
 
   // ── Render ──
   return (
