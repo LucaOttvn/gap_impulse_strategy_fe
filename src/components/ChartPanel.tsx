@@ -26,6 +26,7 @@ import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
 import { ChartRefs, useChartInstance } from "@/pages/trading/hooks/useChartInstance.ts";
 import { useChartLegend } from "@/pages/trading/hooks/useChartLegend.ts";
 import { useChartDataFlow } from "@/pages/trading/hooks/useChartDataFlow.ts";
+import { useChartAppearance } from "@/pages/trading/hooks/useChartAppearance.ts";
 import { useChartOverlays } from "@/pages/trading/hooks/useChartOverlay.ts";
 
 // ── Props ────────────────────────────────────────────────────
@@ -86,11 +87,12 @@ export interface ChartPanelProps {
 // ═══════════════════════════════════════════════════════════
 // CHART PANEL (lightweight-charts)
 // ═══════════════════════════════════════════════════════════
-// useChartInstance     — chart + series + drawing manager lifecycle
-// useChartLegend       — crosshair → OHLCV legend + countdown
-// useChartDataFlow     — bulk setData, live candle, ticks, bid/ask, alerts
-// useChartOverlays     — position/order lines, plugins, strategy primitives
-// What remains here: UI state, appearance, indicators, and rendering.
+// useChartInstance   — chart + series + drawing manager lifecycle
+// useChartLegend     — crosshair → OHLCV legend + countdown
+// useChartDataFlow   — bulk setData, live candle, ticks, bid/ask, alerts
+// useChartOverlays   — position/order lines, plugins, strategy primitives
+// useChartAppearance — candle colors, wicks, volume, grid, TF formatting
+// What remains here: UI state, indicators, replay markers, and rendering.
 
 export function ChartPanel({
   candles,
@@ -253,7 +255,7 @@ export function ChartPanel({
     legendVolRef,
   });
 
-  // ── 4. Overlays (returns slTpLinesRef for the drag hook below) ──
+  // ── 4. Overlays ──
   const { slTpLinesRef } = useChartOverlays({
     chartRefs,
     chartEpoch,
@@ -271,6 +273,16 @@ export function ChartPanel({
     activePlugins,
     isDark,
     chartPrefs,
+  });
+
+  // ── 5. Appearance ──
+  useChartAppearance({
+    chartRefs,
+    chartEpoch,
+    colors,
+    timeframe,
+    chartPrefs,
+    drawingManagerRef,
   });
 
   // ── Extracted hooks ──
@@ -374,68 +386,6 @@ export function ChartPanel({
       markersPlugin.setMarkers([]);
     };
   }, [replayTradeEvents, timeframe]);
-
-  // ── Live appearance settings ──
-  useEffect(() => {
-    const up = colors.up;
-    const down = colors.down;
-    candleSeriesRef.current?.applyOptions({
-      upColor: up,
-      downColor: down,
-      borderUpColor: up,
-      borderDownColor: down,
-      wickUpColor: up,
-      wickDownColor: down,
-      wickVisible: chartPrefs.showWicks,
-      borderVisible: chartPrefs.showCandleBorders,
-    });
-  }, [chartPrefs.candleUpColor, chartPrefs.candleDownColor, chartPrefs.showWicks, chartPrefs.showCandleBorders, colors.up, colors.down, chartEpoch]);
-
-  useEffect(() => {
-    volumeSeriesRef.current?.applyOptions({visible: chartPrefs.showVolume});
-  }, [chartPrefs.showVolume, chartEpoch]);
-
-  useEffect(() => {
-    chartRef.current?.applyOptions({
-      grid: {
-        vertLines: {visible: chartPrefs.showGrid},
-        horzLines: {visible: chartPrefs.showGrid},
-      },
-    });
-  }, [chartPrefs.showGrid, chartEpoch]);
-
-  // ── Timeframe change (in-place) ──
-  useEffect(() => {
-    chartRef.current?.applyOptions({
-      timeScale: {
-        secondsVisible: timeframe === "1m",
-        rightOffset: timeframe === "1m" ? 10 : 6,
-        minBarSpacing: 0.5,
-        tickMarkFormatter: (time: any) => {
-          const d = new Date((time as number) * 1000);
-          return d.toLocaleTimeString("it-IT", {
-            timeZone: "UTC",
-            hour: "2-digit",
-            minute: "2-digit",
-          });
-        },
-      },
-      localization: {
-        timeFormatter: (time: any) => {
-          const d = new Date((time as number) * 1000);
-          return d.toLocaleString("it-IT", {
-            timeZone: "UTC",
-            year: "numeric",
-            month: "short",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          });
-        },
-      },
-    });
-    drawingManagerRef.current?.updateTimeframe(timeframe, (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000);
-  }, [timeframe, drawingManagerRef]);
 
   // ── Render ──
   return (
