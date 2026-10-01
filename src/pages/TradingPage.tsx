@@ -1,41 +1,39 @@
-import {useEffect, useMemo, useState} from "react";
-import {useIsFeedConnected} from "../components/ConnectionIndicator.tsx";
-import {MobileAccountBar, MobileTradingPanel} from "../components/MobileTradingPanel.tsx";
-import {OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog} from "../components/TradingDialogs.tsx";
-import {NewsFeed as MarketNewsFeed} from "../components/TradingPowerFeatures.tsx";
-import {TradingViewTechnicalAnalysis} from "../components/TradingViewWidgets.tsx";
-import {useChartPreferences, updateChartPreferences} from "../hooks/useChartPreferences.ts";
-import type {CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput} from "../services/api/journal.ts";
-import {api} from "../services/api.ts";
-import {useCandles, useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
-import type {PlaceOrderInput, Symbol} from "../services/schemas.ts";
-import {useTradingStore} from "../services/store.tsx";
-import {toast} from "../services/toast.ts";
-import {BottomPanel} from "../components/BottomPanel.tsx";
-import {ChartPanel} from "../components/ChartPanel.tsx";
-import {ChartToolbar} from "../components/ChartToolbar.tsx";
-import {REPLAY_ENABLED, type MagnetMode, type Timeframe} from "./trading/constants.ts";
-import {useReplayChartData} from "./trading/useReplayChartData.ts";
-import {useReplayPlayback} from "./trading/useReplayPlayback.ts";
-import {getPipDigits} from "./trading/utils.ts";
-import {DOMPanel} from "@/components/DOMPanel.tsx";
-import {MarketClosedBanner} from "@/components/MarketClosedBanner.tsx";
-import {OrderPanel} from "@/components/OrderPanel.tsx";
-import {ReplayScrubber} from "@/components/ReplayScrubber.tsx";
-import {WatchlistPanel} from "@/components/WatchlistPanel.tsx";
+import { useEffect, useMemo, useState } from "react";
+import { useIsFeedConnected } from "../components/ConnectionIndicator.tsx";
+import { MobileAccountBar, MobileTradingPanel } from "../components/MobileTradingPanel.tsx";
+import { OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog } from "../components/TradingDialogs.tsx";
+import { NewsFeed as MarketNewsFeed } from "../components/TradingPowerFeatures.tsx";
+import { TradingViewTechnicalAnalysis } from "../components/TradingViewWidgets.tsx";
+import { useChartPreferences, updateChartPreferences } from "../hooks/useChartPreferences.ts";
+import type { CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput } from "../services/api/journal.ts";
+import { api } from "../services/api.ts";
+import { useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry } from "../services/queries.ts";
+import type { Candle, PlaceOrderInput, Symbol } from "../services/schemas.ts";
+import { useTradingStore } from "../services/store.tsx";
+import { toast } from "../services/toast.ts";
+import { BottomPanel } from "../components/BottomPanel.tsx";
+import { ChartPanel } from "../components/ChartPanel.tsx";
+import { ChartToolbar } from "../components/ChartToolbar.tsx";
+import { type MagnetMode } from "./trading/constants.ts";
+import { getPipDigits } from "./trading/utils.ts";
+import { DOMPanel } from "@/components/DOMPanel.tsx";
+import { MarketClosedBanner } from "@/components/MarketClosedBanner.tsx";
+import { OrderPanel } from "@/components/OrderPanel.tsx";
+import { WatchlistPanel } from "@/components/WatchlistPanel.tsx";
 
 // Extracted hooks — each owns one concern (see ./trading/hooks/).
-import {useBottomPanelResize} from "./trading/hooks/useBottomPanelResize.ts";
-import {useChartPlugins} from "./trading/hooks/useChartPlugins.ts";
-import {useChartTooling} from "./trading/hooks/useChartTooling.ts";
-import {useConfirmOrder} from "./trading/hooks/useConfirmOrder.ts";
-import {useModifyPosition} from "./trading/hooks/useModifyPosition.ts";
-import {useQuickOrder} from "./trading/hooks/useQuickOrder.ts";
-import {useTickPriming} from "./trading/hooks/useTickPriming.ts";
-import {useTimeframePersistence} from "./trading/hooks/useTimeframePersistence.ts";
-import {useTradingAnalytics} from "./trading/hooks/useTradingAnalytics.ts";
-import {useTradingLayout} from "./trading/hooks/useTradingLayout.ts";
-import {useTradingState} from "./trading/hooks/useTradingState.ts";
+import { useBottomPanelResize } from "./trading/hooks/useBottomPanelResize.ts";
+import { useChartPlugins } from "./trading/hooks/useChartPlugins.ts";
+import { useChartTooling } from "./trading/hooks/useChartTooling.ts";
+import { useConfirmOrder } from "./trading/hooks/useConfirmOrder.ts";
+import { useModifyPosition } from "./trading/hooks/useModifyPosition.ts";
+import { useQuickOrder } from "./trading/hooks/useQuickOrder.ts";
+import { useTickPriming } from "./trading/hooks/useTickPriming.ts";
+import { useTimeframePersistence } from "./trading/hooks/useTimeframePersistence.ts";
+import { useTradingAnalytics } from "./trading/hooks/useTradingAnalytics.ts";
+import { useTradingLayout } from "./trading/hooks/useTradingLayout.ts";
+import { useTradingState } from "./trading/hooks/useTradingState.ts";
+import { fetchCandles } from "@/services/queries_new.ts";
 
 /** Narrow an unknown error object down to a display message. */
 function getErrorMessage(err: unknown): string {
@@ -47,40 +45,12 @@ function getErrorMessage(err: unknown): string {
 }
 
 /**
- * Deep-history target used after the initial fast render completes.
- * Bars per TF, tuned so each fetch stays under the backend cap and the chart
- * stays responsive.
- */
-function deepLimitFor(timeframe: Timeframe): number {
-  switch (timeframe) {
-    case "1m":
-      return 3_000;
-    case "5m":
-      return 5_000;
-    case "15m":
-      return 12_000;
-    case "30m":
-      return 8_000;
-    case "1h":
-      return 8_760;
-    case "4h":
-      return 2_500;
-    case "1d":
-      return 1_000;
-    case "1w":
-      return 520;
-    default:
-      return 5_000;
-  }
-}
-
-/**
  * Top-level trading page. Owns the layout (chart + bottom panel + right rail
  * + mobile sheet) and wires the extracted hooks together.
  */
 export function TradingPage() {
-  // Global trading store: selected symbol, live ticks, active account, replay.
-  const {selectedSymbol, setSelectedSymbol, ticks, updateTick, activeAccountId, symbols: _storeSymbols, replayVersion, isReplaying} = useTradingStore();
+  // Global trading store: selected symbol, live ticks, active account.
+  const {selectedSymbol, setSelectedSymbol, ticks, updateTick, activeAccountId, symbols: _storeSymbols} = useTradingStore();
 
   // Timeframe is per-symbol and persisted to localStorage.
   const [timeframe, handleTimeframeChange] = useTimeframePersistence(selectedSymbol);
@@ -126,17 +96,26 @@ export function TradingPage() {
 
   // ── Effects ──────────────────────────────────────────────────
   useTickPriming(selectedSymbol, updateTick);
-  useReplayPlayback(activeAccountId ?? "");
 
   // ── Data ─────────────────────────────────────────────────────
   const {data: symbols = []} = useSymbols();
   const isFeedConnected = useIsFeedConnected();
 
-  const candleLimit = 3000;
-  const {data: candles = []} = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
-
-  // Replay overrides the live candle array when active.
-  const {replayCandles, replayTradeEvents} = useReplayChartData(activeAccountId);
+  // -- FETCHING ENTRY POINT ----------------------------------------
+  const [candles, setCandles] = useState<Candle[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await fetchCandles(selectedSymbol, timeframe);
+      console.log(selectedSymbol)
+      console.log(timeframe)
+      if (!cancelled) setCandles(result);
+    })();
+    // If the component unmounts before the setCandles happens to avoid race conditions (e.g. the user rapidly changes the selectedSymbol).
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSymbol, timeframe]);
 
   // Positions, orders, journal.
   const {data: positions = []} = usePositions(activeAccountId);
@@ -206,8 +185,6 @@ export function TradingPage() {
         onToggleRightPanel={toggleRightPanel}
         tick={tick}
         symbolInfo={symbolInfo}
-        isReplaying={isReplaying}
-        replayAccountId={activeAccountId}
         activePlugins={activePlugins}
         onTogglePlugin={togglePlugin}
         onSetIndicators={setActiveIndicators}
@@ -226,9 +203,9 @@ export function TradingPage() {
           {/* Chart Area */}
           <div className="flex-1 min-h-[200px] relative">
             <ChartPanel
-              candles={replayCandles ?? candles}
+              candles={candles}
               selectedSymbol={selectedSymbol}
-              timeframe={replayCandles ? "1m" : timeframe}
+              timeframe={timeframe}
               isDark={isDark}
               activeIndicators={activeIndicators}
               drawingTool={drawingTool}
@@ -244,13 +221,11 @@ export function TradingPage() {
               stayInDrawingMode={chartPrefs.stayInDrawingMode}
               positions={chartPositions}
               orders={chartOrders}
-              tick={replayCandles ? undefined : tick}
-              liveCandle={replayCandles ? undefined : liveCandle}
+              tick={tick}
+              liveCandle={liveCandle}
               pipDigits={pipDigits}
               symbolInfo={symbolInfo}
               onModifyPosition={handleChartModifyPosition}
-              replayTradeEvents={replayTradeEvents}
-              isReplaying={isReplaying}
               activePlugins={activePlugins}
               onTogglePlugin={togglePlugin}
               accountEquity={account?.equity ?? account?.balance ?? 0}
@@ -260,8 +235,6 @@ export function TradingPage() {
               onClearIndicators={clearIndicators}
             />
           </div>
-
-          {REPLAY_ENABLED && isReplaying && activeAccountId != null && <ReplayScrubber accountId={activeAccountId} />}
 
           {/* Resize Handle */}
           <div
