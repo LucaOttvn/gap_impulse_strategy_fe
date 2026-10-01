@@ -58,10 +58,6 @@ interface Args {
   onDrawingSelectionChange: (ids: string[]) => void;
   onDrawingRequestSettings: (id: string) => void;
   onDrawingContextMenu: (id: string, x: number, y: number) => void;
-
-  // Pagination trigger.
-  onLoadMoreHistory?: () => void;
-  canLoadMoreHistory: boolean;
 }
 
 export function useChartInstance(args: Args) {
@@ -72,7 +68,7 @@ export function useChartInstance(args: Args) {
     onAddDrawingRef, onUpdateDrawingRef, onRemoveDrawingRef, onDrawingCompleteRef,
     onDrawingToolSelectRef, onUndoDrawingRef, onRedoDrawingRef,
     onDrawingMenuOpened, onDrawingSelectionChange, onDrawingRequestSettings,
-    onDrawingContextMenu, onLoadMoreHistory, canLoadMoreHistory,
+    onDrawingContextMenu,
   } = args;
 
   const { chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef } = chartRefs;
@@ -91,11 +87,6 @@ export function useChartInstance(args: Args) {
   const magnetRef = useRef(magnetMode); magnetRef.current = magnetMode;
   const stayInModeRef = useRef(stayInDrawingMode); stayInModeRef.current = stayInDrawingMode;
   const accountEquityRef = useRef(accountEquity); accountEquityRef.current = accountEquity;
-
-  // Pagination callback — same idea: the range-change handler is installed
-  // once, but needs to see the latest values.
-  const onLoadMoreRef = useRef(onLoadMoreHistory); onLoadMoreRef.current = onLoadMoreHistory;
-  const canLoadMoreRef = useRef(canLoadMoreHistory); canLoadMoreRef.current = canLoadMoreHistory;
 
   // The DrawingToolsManager instance. Exposed to ChartPanel so the object-tree
   // UI can call setSelection() on it.
@@ -216,23 +207,12 @@ export function useChartInstance(args: Args) {
     const onStyleChange = () => manager.setStyleDefaults(getStyleDefaults());
     window.addEventListener(DRAWING_STYLES_EVENT, onStyleChange);
 
-    // ── 6. Infinite-history scroll trigger ────────────────────
-    // The parent owns the paginated source. When the visible range starts
-    // within 20 bars of the oldest loaded bar, ask for the next page.
-    const handleRange = (range: { from: number; to: number } | null) => {
-      if (range && range.from < 20 && canLoadMoreRef.current) {
-        onLoadMoreRef.current?.();
-      }
-    };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(handleRange as never);
-
     // ── 7. Signal other hooks that the chart exists ───────────
     setChartEpoch((e) => e + 1);
 
     // ── 8. Teardown ───────────────────────────────────────────
     return () => {
       window.removeEventListener(DRAWING_STYLES_EVENT, onStyleChange);
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRange as never);
       ro.disconnect();
       manager.destroy();
       drawingManagerRef.current = null;

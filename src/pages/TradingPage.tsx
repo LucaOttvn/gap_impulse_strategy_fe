@@ -8,7 +8,7 @@ import {useChartPreferences, updateChartPreferences} from "../hooks/useChartPref
 import type {CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput} from "../services/api/journal.ts";
 import {api} from "../services/api.ts";
 import {useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
-import type {Candle, PlaceOrderInput, Symbol} from "../services/schemas.ts";
+import type {PlaceOrderInput, Symbol} from "../services/schemas.ts";
 import {useTradingStore} from "../services/store.tsx";
 import {toast} from "../services/toast.ts";
 import {BottomPanel} from "../components/BottomPanel.tsx";
@@ -31,8 +31,8 @@ import {useQuickOrder} from "./trading/hooks/useQuickOrder.ts";
 import {useTimeframePersistence} from "./trading/hooks/useTimeframePersistence.ts";
 import {useTradingLayout} from "./trading/hooks/useTradingLayout.ts";
 import {useTradingState} from "./trading/hooks/useTradingState.ts";
-import {fetchCandles} from "@/services/queries_new.ts";
 import {useTradingAnalytics} from "./trading/hooks/useTradingAnalytics.ts";
+import {useInfiniteCandles} from "./trading/hooks/useInfiniteCandles.ts";
 
 /** Narrow an unknown error object down to a display message. */
 function getErrorMessage(err: unknown): string {
@@ -98,18 +98,7 @@ export function TradingPage() {
   const isFeedConnected = useIsFeedConnected();
 
   // -- FETCHING ENTRY POINT ----------------------------------------
-  const [candles, setCandles] = useState<Candle[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const result = await fetchCandles(selectedSymbol, timeframe);
-      if (!cancelled) setCandles(result);
-    })();
-    // If the component unmounts before the setCandles happens to avoid race conditions (e.g. the user rapidly changes the selectedSymbol).
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSymbol, timeframe]);
+  const {allCandles, fetchOlder, hasOlder} = useInfiniteCandles(selectedSymbol, timeframe);
 
   // Positions, orders, journal.
   const {data: positions = []} = usePositions(activeAccountId);
@@ -196,7 +185,9 @@ export function TradingPage() {
           {/* Chart Area */}
           <div className="flex-1 min-h-[200px] relative">
             <ChartPanel
-              candles={candles}
+              allCandles={allCandles}
+              onLoadMoreHistory={fetchOlder}
+              canLoadMoreHistory={hasOlder}
               selectedSymbol={selectedSymbol}
               timeframe={timeframe}
               isDark={isDark}

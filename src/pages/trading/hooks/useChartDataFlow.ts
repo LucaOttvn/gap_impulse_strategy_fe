@@ -36,7 +36,7 @@ interface Args {
     volume: number;
     timestamp: number;
   };
-  tick?: {bid: number; ask: number; timestamp: number};
+  tick?: { bid: number; ask: number; timestamp: number };
   candles: Candle[];
   pipDigits: number;
   /** Pass `visibleDrawings` so alerts only fire for drawings shown on this TF. */
@@ -150,10 +150,25 @@ export function useChartDataFlow(args: Args) {
     const loadKey = `${selectedSymbol}:${timeframe}`;
     const isNewChart = lastLoadKeyRef.current !== loadKey;
 
+    // Capture the currently-visible time range BEFORE setData wipes it. When
+    // the sliding window changes the slice, we restore this range so the
+    // user's position stays stable across the shift.
+    const chart = chartRef.current;
+    const prevRange = chart && !isNewChart ? chart.timeScale().getVisibleRange() : null;
+
     series.setData(chartData);
     volumeSeriesRef.current?.setData(volumeData);
     lastCandleRef.current = chartData[chartData.length - 1] ?? null;
     setLegend(legendFromSeries(chartData, volumeData));
+
+    // Restore the visible time range if we had one.
+    if (prevRange && chart) {
+      try {
+        chart.timeScale().setVisibleRange(prevRange);
+      } catch {
+        // Range out of bounds after slice change — let the chart auto-fit.
+      }
+    }
 
     const buffered = latestLiveCandleRef.current;
     if (!isNewChart) {
@@ -167,7 +182,7 @@ export function useChartDataFlow(args: Args) {
     replayBufferedLive(buffered, chartData, ctx);
 
     if (chartRef.current) {
-      chartRef.current.priceScale("right").applyOptions({autoScale: false});
+      chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
     return scheduleStaleRefetch(chartData, ctx);
   }, [
@@ -198,7 +213,7 @@ export function useChartDataFlow(args: Args) {
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
-    applyBidAskLines(tick, {showBidLine, showAskLine}, makeRtCtx(series));
+    applyBidAskLines(tick, { showBidLine, showAskLine }, makeRtCtx(series));
   }, [tick, showBidLine, showAskLine, makeRtCtx, candleSeriesRef]);
 
   // ── 5. Line-cross price alerts ──

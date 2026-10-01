@@ -118,3 +118,57 @@ export interface CandlePage {
   candles: Candle[];
   hasMoreBefore: boolean;
 }
+
+export interface CandleRangeResult {
+  candles: Candle[];
+  hasMoreBefore: boolean;
+}
+
+export async function getCandlesInRange(
+  symbol: string,
+  timeframe: string,
+  fromMs: number,
+  toMs: number,
+): Promise<CandleRangeResult> {
+  const [multiplier, timespan] = TIMEFRAME_MAP[timeframe] ?? ["1", "day"];
+
+  const params = new URLSearchParams({
+    ticker: symbol,
+    multiplier,
+    timespan,
+    from: toIsoDate(fromMs),
+    to: toIsoDate(toMs),
+  });
+
+  const res = await fetch(`${API_BASE}/api/stocks?${params}`);
+  if (!res.ok) {
+    throw new ApiError(`Candle fetch failed: ${res.status}`, res.status);
+  }
+
+  const json = (await res.json()) as MassiveResponse;
+  if (!json.results?.length) return { candles: [], hasMoreBefore: false };
+
+  const isIntraday = timespan !== "day" && timespan !== "week" && timespan !== "month";
+
+  const candles = json.results.map((r) => {
+    const utcSeconds = Math.floor(r.t / 1000);
+    const displaySeconds = isIntraday
+      ? utcSeconds + getRomeOffsetSeconds(r.t)
+      : utcSeconds;
+
+    return {
+      time: displaySeconds as UTCTimestamp,
+      timestamp: r.t,
+      open: r.o,
+      high: r.h,
+      low: r.l,
+      close: r.c,
+      volume: r.v,
+    };
+  });
+
+  // A page is "done" when the server returns nothing. `hasMoreBefore` is a
+  // hint that we can keep walking back; the authoritative stop is an empty
+  // page in useInfiniteCandles' getNextPageParam.
+  return { candles, hasMoreBefore: true };
+}
