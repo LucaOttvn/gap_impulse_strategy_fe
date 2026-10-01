@@ -1,39 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
-import { useIsFeedConnected } from "../components/ConnectionIndicator.tsx";
-import { MobileAccountBar, MobileTradingPanel } from "../components/MobileTradingPanel.tsx";
-import { OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog } from "../components/TradingDialogs.tsx";
-import { NewsFeed as MarketNewsFeed } from "../components/TradingPowerFeatures.tsx";
-import { TradingViewTechnicalAnalysis } from "../components/TradingViewWidgets.tsx";
-import { useChartPreferences, updateChartPreferences } from "../hooks/useChartPreferences.ts";
-import type { CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput } from "../services/api/journal.ts";
-import { api } from "../services/api.ts";
-import { useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry } from "../services/queries.ts";
-import type { Candle, PlaceOrderInput, Symbol } from "../services/schemas.ts";
-import { useTradingStore } from "../services/store.tsx";
-import { toast } from "../services/toast.ts";
-import { BottomPanel } from "../components/BottomPanel.tsx";
-import { ChartPanel } from "../components/ChartPanel.tsx";
-import { ChartToolbar } from "../components/ChartToolbar.tsx";
-import { type MagnetMode } from "./trading/constants.ts";
-import { getPipDigits } from "./trading/utils.ts";
-import { DOMPanel } from "@/components/DOMPanel.tsx";
-import { MarketClosedBanner } from "@/components/MarketClosedBanner.tsx";
-import { OrderPanel } from "@/components/OrderPanel.tsx";
-import { WatchlistPanel } from "@/components/WatchlistPanel.tsx";
+import {useEffect, useMemo, useState} from "react";
+import {useIsFeedConnected} from "../components/ConnectionIndicator.tsx";
+import {MobileAccountBar, MobileTradingPanel} from "../components/MobileTradingPanel.tsx";
+import {OrderConfirmDialog, OrderModifyDialog, PositionModifyDialog} from "../components/TradingDialogs.tsx";
+import {NewsFeed as MarketNewsFeed} from "../components/TradingPowerFeatures.tsx";
+import {TradingViewTechnicalAnalysis} from "../components/TradingViewWidgets.tsx";
+import {useChartPreferences, updateChartPreferences} from "../hooks/useChartPreferences.ts";
+import type {CreateJournalEntryInput, JournalEntry, UpdateJournalEntryInput} from "../services/api/journal.ts";
+import {api} from "../services/api.ts";
+import {useCreateJournalEntry, useDeleteJournalEntry, useJournalEntries, useOrders, usePositions, useSymbols, useUpdateJournalEntry} from "../services/queries.ts";
+import type {Candle, PlaceOrderInput, Symbol} from "../services/schemas.ts";
+import {useTradingStore} from "../services/store.tsx";
+import {toast} from "../services/toast.ts";
+import {BottomPanel} from "../components/BottomPanel.tsx";
+import {ChartPanel} from "../components/ChartPanel.tsx";
+import {ChartToolbar} from "../components/ChartToolbar.tsx";
+import {type MagnetMode} from "./trading/constants.ts";
+import {getPipDigits} from "./trading/utils.ts";
+import {DOMPanel} from "@/components/DOMPanel.tsx";
+import {MarketClosedBanner} from "@/components/MarketClosedBanner.tsx";
+import {OrderPanel} from "@/components/OrderPanel.tsx";
+import {WatchlistPanel} from "@/components/WatchlistPanel.tsx";
 
 // Extracted hooks — each owns one concern (see ./trading/hooks/).
-import { useBottomPanelResize } from "./trading/hooks/useBottomPanelResize.ts";
-import { useChartPlugins } from "./trading/hooks/useChartPlugins.ts";
-import { useChartTooling } from "./trading/hooks/useChartTooling.ts";
-import { useConfirmOrder } from "./trading/hooks/useConfirmOrder.ts";
-import { useModifyPosition } from "./trading/hooks/useModifyPosition.ts";
-import { useQuickOrder } from "./trading/hooks/useQuickOrder.ts";
-import { useTickPriming } from "./trading/hooks/useTickPriming.ts";
-import { useTimeframePersistence } from "./trading/hooks/useTimeframePersistence.ts";
-import { useTradingAnalytics } from "./trading/hooks/useTradingAnalytics.ts";
-import { useTradingLayout } from "./trading/hooks/useTradingLayout.ts";
-import { useTradingState } from "./trading/hooks/useTradingState.ts";
-import { fetchCandles } from "@/services/queries_new.ts";
+import {useBottomPanelResize} from "./trading/hooks/useBottomPanelResize.ts";
+import {useChartPlugins} from "./trading/hooks/useChartPlugins.ts";
+import {useChartTooling} from "./trading/hooks/useChartTooling.ts";
+import {useConfirmOrder} from "./trading/hooks/useConfirmOrder.ts";
+import {useModifyPosition} from "./trading/hooks/useModifyPosition.ts";
+import {useQuickOrder} from "./trading/hooks/useQuickOrder.ts";
+import {useTimeframePersistence} from "./trading/hooks/useTimeframePersistence.ts";
+import {useTradingLayout} from "./trading/hooks/useTradingLayout.ts";
+import {useTradingState} from "./trading/hooks/useTradingState.ts";
+import {fetchCandles} from "@/services/queries_new.ts";
+import {useTradingAnalytics} from "./trading/hooks/useTradingAnalytics.ts";
 
 /** Narrow an unknown error object down to a display message. */
 function getErrorMessage(err: unknown): string {
@@ -94,9 +93,6 @@ export function TradingPage() {
   });
   const {trackFirstTrade} = useTradingAnalytics();
 
-  // ── Effects ──────────────────────────────────────────────────
-  useTickPriming(selectedSymbol, updateTick);
-
   // ── Data ─────────────────────────────────────────────────────
   const {data: symbols = []} = useSymbols();
   const isFeedConnected = useIsFeedConnected();
@@ -107,8 +103,6 @@ export function TradingPage() {
     let cancelled = false;
     (async () => {
       const result = await fetchCandles(selectedSymbol, timeframe);
-      console.log(selectedSymbol)
-      console.log(timeframe)
       if (!cancelled) setCandles(result);
     })();
     // If the component unmounts before the setCandles happens to avoid race conditions (e.g. the user rapidly changes the selectedSymbol).
