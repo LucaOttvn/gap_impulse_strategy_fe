@@ -190,7 +190,6 @@ export function TradingPage() {
       />
 
       <MarketClosedBanner symbolInfo={symbolInfo} />
-
       {/* Main Layout */}
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         <div className="flex flex-col flex-1 min-w-0">

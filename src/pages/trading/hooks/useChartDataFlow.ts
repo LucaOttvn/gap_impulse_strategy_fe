@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CandlestickData, type IPriceLine, type ISeriesApi, type Time } from "lightweight-charts";
 import { detectCrossings, playAlertBeep } from "../../../lib/chart-plugins/drawing-tools/line-alerts";
@@ -89,6 +89,22 @@ export function useChartDataFlow(args: Args) {
   const alertMidRef = useRef<number | null>(null);
   const alertFiredRef = useRef<Map<string, number>>(new Map());
 
+  // ── Content signature for the bulk setData ──
+  // `chartData` identity changes on every transform recompute (which happens
+  // on every parent render, every refetch, every placeholderData swap). A
+  // full series.setData on 3,000+ bars is 100–500 ms of main-thread work —
+  // we only want to pay that when the shape of the data actually changed.
+  //
+  // The signature captures symbol, timeframe, bar count and the last bar's
+  // time. Anything that isn't a structural change (a live tick mutating the
+  // last bar's close, a refetch that returns identical bars) leaves the sig
+  // untouched and the effect bails early. Live updates still flow through
+  // applyServerCandle / applyTick below, which use series.update() — O(1).
+  const lastDataSigRef = useRef<string>("");
+  const dataSig = chartData.length === 0
+    ? ""
+    : `${selectedSymbol}:${timeframe}:${chartData.length}:${chartData[chartData.length - 1]!.time}`;
+
   // ── Bundle the refs/config the realtime helpers need ──
   const makeRtCtx = useCallback(
     (series: ISeriesApi<"Candlestick">): RtCtx => ({
@@ -116,11 +132,19 @@ export function useChartDataFlow(args: Args) {
   }, [liveCandle]);
 
   // ── 1. Bulk setData ──
-  // Full replace of the series. `isNewChart` distinguishes a fresh
-  // symbol/TF (fit the viewport) from a growing dataset (preserve it).
+  // Full replace of the series. `isNewChart` distinguishes a fresh symbol/TF
+  // (fit the viewport) from a growing dataset (preserve it).
+  //
+  // Gated on `dataSig`, NOT `chartData`: a refetch that returns the same
+  // bars, or a parent re-render with a new array reference, is a no-op here.
+  // Rebuild only happens when the series' shape actually changed (initial
+  // load, pagination, symbol/TF switch).
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || chartData.length === 0) return;
+
+    if (dataSig === lastDataSigRef.current) return;
+    lastDataSigRef.current = dataSig;
 
     const ctx = makeRtCtx(series);
     const loadKey = `${selectedSymbol}:${timeframe}`;
@@ -146,9 +170,13 @@ export function useChartDataFlow(args: Args) {
       chartRef.current.priceScale("right").applyOptions({autoScale: false});
     }
     return scheduleStaleRefetch(chartData, ctx);
-  }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx, setLegend, candleSeriesRef, volumeSeriesRef, chartRef, lastCandleRef]);
+  }, [
+    dataSig, volumeData, selectedSymbol, timeframe, makeRtCtx, setLegend,
+    candleSeriesRef, volumeSeriesRef, chartRef, lastCandleRef,
+  ]);
 
   // ── 2. Live candle from server ──
+  // O(1) via series.update(). Safe to run on every server pulse.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !liveCandle || !lastCandleRef.current) return;
@@ -156,6 +184,8 @@ export function useChartDataFlow(args: Args) {
   }, [liveCandle, makeRtCtx, candleSeriesRef, lastCandleRef]);
 
   // ── 3. Tick smoothing ──
+  // Merges bid/ask into the current bar between server pulses. Overwritten
+  // by the next applyServerCandle.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !tick) return;
@@ -163,6 +193,8 @@ export function useChartDataFlow(args: Args) {
   }, [tick, makeRtCtx, candleSeriesRef]);
 
   // ── 4. Bid/ask price lines ──
+  // applyBidAskLines moves existing lines in place (applyOptions), creating
+  // them only once — no remove+create churn per tick.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
@@ -170,6 +202,9 @@ export function useChartDataFlow(args: Args) {
   }, [tick, showBidLine, showAskLine, makeRtCtx, candleSeriesRef]);
 
   // ── 5. Line-cross price alerts ──
+  // Fires a toast + beep when the mid price crosses an alert-enabled line.
+  // Drawings are read from the caller's `visibleDrawings` so alerts only
+  // fire for drawings shown on the current timeframe.
   useEffect(() => {
     if (!tick) return;
     const mid = (tick.bid + tick.ask) / 2;
@@ -185,6 +220,9 @@ export function useChartDataFlow(args: Args) {
   }, [tick, selectedSymbol, pipDigits, drawings]);
 
   // ── 6. Staleness watchdog ──
+  // Recovery path if CandleUpdates stop arriving (data-provider disconnect,
+  // aggregator restart). The live effects only run when their props change,
+  // so this interval is the only way to notice silence.
   useEffect(() => {
     if (isReplaying) return;
     const intervalSec = (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000;
