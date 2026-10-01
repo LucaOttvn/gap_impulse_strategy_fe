@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Candle } from "../../../services/schemas";
 import type { ChartRefs } from "./useChartInstance";
 
@@ -12,6 +12,8 @@ interface Args {
   onNeedOlder?: () => void;
   /** False once the cache has no more history. */
   canLoadOlder?: boolean;
+  /** True while a page fetch is in flight — gates further onNeedOlder calls. */
+  isFetchingOlder?: boolean;
 }
 
 const WINDOW_SIZE = 10_000;   // max bars the chart ever renders
@@ -21,21 +23,19 @@ const SLIDE_BARS = 3_000;     // how far the window shifts per slide
 /**
  * Bounds the number of candles the chart actually renders.
  *
- * React Query caches every loaded page — potentially hundreds of thousands
- * of bars. But setData, indicators, strategy primitives and every re-render
- * are all O(bars), so the chart only sees a moving window of WINDOW_SIZE
- * bars at a time.
+ * `rightOffset` is anchored to the NEWEST end of `allCandles`. Slice =
+ * allCandles[len - rightOffset - WINDOW_SIZE .. len - rightOffset].
  *
- * The window is defined by `rightOffset` — how many bars from the newest end
- * of `allCandles` the window's right edge sits. 0 = the newest WINDOW_SIZE
- * bars. As the user scrolls near an edge, the window slides.
- *
- * When the user reaches the oldest loaded bar and `canLoadOlder` is true,
- * `onNeedOlder` is called — the parent fetches the next page and the window
- * has more to slide into.
+ * Because the anchor is the newest end, prepending older bars does NOT
+ * require adjusting rightOffset — the slice still contains the same bars.
+ * (The previous version bumped rightOffset by the prepend amount, which
+ * shifted the slice one full page past the user's viewport on every fetch.)
  */
 export function useSlidingCandles(args: Args): Candle[] {
-  const { chartRefs, allCandles, chartEpoch, onNeedOlder, canLoadOlder = false } = args;
+  const {
+    chartRefs, allCandles, chartEpoch,
+    onNeedOlder, canLoadOlder = false, isFetchingOlder = false,
+  } = args;
 
   const [rightOffset, setRightOffset] = useState(0);
   const rightOffsetRef = useRef(rightOffset);
@@ -48,43 +48,14 @@ export function useSlidingCandles(args: Args): Candle[] {
   onNeedOlderRef.current = onNeedOlder;
   const canLoadOlderRef = useRef(canLoadOlder);
   canLoadOlderRef.current = canLoadOlder;
+  const isFetchingOlderRef = useRef(isFetchingOlder);
+  isFetchingOlderRef.current = isFetchingOlder;
 
-  // When older pages are prepended to `allCandles`, the array grows at the
-  // front. Bump `rightOffset` by the same delta so the window keeps rendering
-  // the same bars instead of jumping forward.
-  const prevLenRef = useRef(allCandles.length);
-  const prevFirstTimeRef = useRef<number | undefined>(
-    allCandles[0]?.time as unknown as number | undefined,
-  );
-  useEffect(() => {
-    const prevLen = prevLenRef.current;
-    const prevFirst = prevFirstTimeRef.current;
-    const currLen = allCandles.length;
-    const currFirst = allCandles[0]?.time as unknown as number | undefined;
-
-    prevLenRef.current = currLen;
-    prevFirstTimeRef.current = currFirst;
-
-    if (currLen === 0) {
-      setRightOffset(0);
-      return;
-    }
-    if (
-      prevFirst !== undefined &&
-      currFirst !== undefined &&
-      currFirst < prevFirst &&
-      currLen > prevLen
-    ) {
-      setRightOffset((o) => o + (currLen - prevLen));
-    }
-  }, [allCandles]);
-
-  // Fresh chart (symbol / timeframe switch) — reset to the newest window.
-  useEffect(() => {
+  // Reset the window on chart recreation (symbol / timeframe switch).
+  useLayoutEffect(() => {
     setRightOffset(0);
   }, [chartEpoch]);
 
-  // The slice the chart actually renders.
   const visibleCandles = useMemo(() => {
     if (allCandles.length === 0) return [];
     const end = Math.max(0, allCandles.length - rightOffset);
@@ -92,7 +63,7 @@ export function useSlidingCandles(args: Args): Candle[] {
     return allCandles.slice(start, end);
   }, [allCandles, rightOffset]);
 
-  // Scroll handler — slides the window or asks for more history.
+  // Scroll handler — slides the window or fetches when it hits the edge.
   useEffect(() => {
     const chart = chartRefs.chart.current;
     if (!chart) return;
@@ -111,19 +82,22 @@ export function useSlidingCandles(args: Args): Candle[] {
         const canSlideRight = offset > 0;
 
         if (range.from < LOW_WATER) {
-          // Near left edge — slide toward older bars, or fetch if we're
-          // already at the oldest loaded bar.
-          if (canSlideLeft) {
-            setRightOffset((o) =>
-              Math.min(o + SLIDE_BARS, Math.max(0, total - WINDOW_SIZE)),
-            );
-          } else if (canLoadOlderRef.current) {
+          // Clamp the slide so the user's viewport stays inside the new
+          // slice. Without this, the slide can push the slice past the
+          // user's view, and the setVisibleRange restore in
+          // useChartDataFlow fails — chart auto-fits (zoom out).
+          const maxSlide = Math.max(0, WINDOW_SIZE - range.to - 1);
+          const delta = Math.min(SLIDE_BARS, maxSlide);
+          if (canSlideLeft && delta > 0) {
+            setRightOffset((o) => Math.min(o + delta, Math.max(0, total - WINDOW_SIZE)));
+          } else if (canLoadOlderRef.current && !isFetchingOlderRef.current) {
             onNeedOlderRef.current?.();
           }
         } else if (range.to > WINDOW_SIZE - LOW_WATER) {
-          // Near right edge — slide toward newer bars.
-          if (canSlideRight) {
-            setRightOffset((o) => Math.max(0, o - SLIDE_BARS));
+          const maxSlide = Math.max(0, range.from);
+          const delta = Math.min(SLIDE_BARS, maxSlide);
+          if (canSlideRight && delta > 0) {
+            setRightOffset((o) => Math.max(0, o - delta));
           }
         }
       });

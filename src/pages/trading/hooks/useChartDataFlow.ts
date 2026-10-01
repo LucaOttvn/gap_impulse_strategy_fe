@@ -8,16 +8,9 @@ import type { DrawingLine, Timeframe } from "../constants";
 import { TF_INTERVAL_MS } from "../constants";
 import { useChartData as useCandleTransform } from "../chartData";
 import {
-  applyBidAskLines,
-  applyServerCandle,
-  applyTick,
-  legendFromSeries,
-  reapplyLive,
-  replayBufferedLive,
-  requestGapRefetch,
-  scheduleStaleRefetch,
-  scrollOrFit,
-  type RtCtx,
+  applyBidAskLines, applyServerCandle, applyTick, legendFromSeries,
+  reapplyLive, replayBufferedLive, requestGapRefetch, scheduleStaleRefetch,
+  scrollOrFit, type RtCtx,
 } from "../chartRealtime";
 import type { OhlcvLegend } from "../chartTypes";
 import type { ChartRefs } from "./useChartInstance";
@@ -28,43 +21,18 @@ interface Args {
   timeframe: Timeframe;
   selectedSymbol: string;
   isReplaying: boolean;
-  liveCandle?: {
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    timestamp: number;
-  };
+  liveCandle?: { open: number; high: number; low: number; close: number; volume: number; timestamp: number };
   tick?: { bid: number; ask: number; timestamp: number };
   candles: Candle[];
   pipDigits: number;
-  /** Pass `visibleDrawings` so alerts only fire for drawings shown on this TF. */
   drawings: DrawingLine[];
   showBidLine: boolean;
   showAskLine: boolean;
-  /** From useChartLegend — the realtime helpers write the legend on every tick. */
   setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>;
-  /** Owned by ChartPanel; also read by useChartLegend. */
   lastCandleRef: React.RefObject<CandlestickData<Time> | null>;
   legendVolRef: React.RefObject<number>;
 }
 
-/**
- * The realtime pipeline: everything that turns raw candles / ticks / live
- * updates into what's drawn on the series. Owns the six effects that used
- * to sit scattered through ChartPanel:
- *
- *   1. bulk setData (initial load / refetch)
- *   2. live candle from server (applyServerCandle)
- *   3. tick smoothing between server pulses (applyTick)
- *   4. bid/ask price lines (applyBidAskLines)
- *   5. line-cross alerts
- *   6. staleness watchdog
- *
- * Returns the chart-ready `chartData`/`volumeData` so ChartPanel can hand
- * them to `useIndicators` without re-running the transform.
- */
 export function useChartDataFlow(args: Args) {
   const {
     chartRefs, colors, timeframe, selectedSymbol, isReplaying,
@@ -75,10 +43,8 @@ export function useChartDataFlow(args: Args) {
   const qc = useQueryClient();
   const { chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef } = chartRefs;
 
-  // Raw candles → series-ready arrays. Owned here now (was in ChartPanel).
   const { chartData, volumeData } = useCandleTransform(candles, colors);
 
-  // ── Internal refs (all moved out of ChartPanel) ──
   const lastLoadKeyRef = useRef<string>("");
   const latestLiveCandleRef = useRef<typeof liveCandle>(undefined);
   const liveCandleTsRef = useRef<number>(0);
@@ -89,23 +55,11 @@ export function useChartDataFlow(args: Args) {
   const alertMidRef = useRef<number | null>(null);
   const alertFiredRef = useRef<Map<string, number>>(new Map());
 
-  // ── Content signature for the bulk setData ──
-  // `chartData` identity changes on every transform recompute (which happens
-  // on every parent render, every refetch, every placeholderData swap). A
-  // full series.setData on 3,000+ bars is 100–500 ms of main-thread work —
-  // we only want to pay that when the shape of the data actually changed.
-  //
-  // The signature captures symbol, timeframe, bar count and the last bar's
-  // time. Anything that isn't a structural change (a live tick mutating the
-  // last bar's close, a refetch that returns identical bars) leaves the sig
-  // untouched and the effect bails early. Live updates still flow through
-  // applyServerCandle / applyTick below, which use series.update() — O(1).
   const lastDataSigRef = useRef<string>("");
   const dataSig = chartData.length === 0
     ? ""
     : `${selectedSymbol}:${timeframe}:${chartData.length}:${chartData[chartData.length - 1]!.time}`;
 
-  // ── Bundle the refs/config the realtime helpers need ──
   const makeRtCtx = useCallback(
     (series: ISeriesApi<"Candlestick">): RtCtx => ({
       series,
@@ -117,32 +71,16 @@ export function useChartDataFlow(args: Args) {
       bidLine: bidLineRef,
       askLine: askLineRef,
       midLine: midLineRef,
-      colors,
-      timeframe,
-      symbol: selectedSymbol,
-      qc,
-      setLegend,
+      colors, timeframe, symbol: selectedSymbol, qc, setLegend,
     }),
     [colors, timeframe, selectedSymbol, qc, setLegend, lastCandleRef, legendVolRef, volumeSeriesRef],
   );
 
-  // Keep latest live candle in a ref — bulk-load reads it without re-running.
-  useEffect(() => {
-    latestLiveCandleRef.current = liveCandle;
-  }, [liveCandle]);
+  useEffect(() => { latestLiveCandleRef.current = liveCandle; }, [liveCandle]);
 
-  // ── 1. Bulk setData ──
-  // Full replace of the series. `isNewChart` distinguishes a fresh symbol/TF
-  // (fit the viewport) from a growing dataset (preserve it).
-  //
-  // Gated on `dataSig`, NOT `chartData`: a refetch that returns the same
-  // bars, or a parent re-render with a new array reference, is a no-op here.
-  // Rebuild only happens when the series' shape actually changed (initial
-  // load, pagination, symbol/TF switch).
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || chartData.length === 0) return;
-
     if (dataSig === lastDataSigRef.current) return;
     lastDataSigRef.current = dataSig;
 
@@ -150,9 +88,6 @@ export function useChartDataFlow(args: Args) {
     const loadKey = `${selectedSymbol}:${timeframe}`;
     const isNewChart = lastLoadKeyRef.current !== loadKey;
 
-    // Capture the currently-visible time range BEFORE setData wipes it. When
-    // the sliding window changes the slice, we restore this range so the
-    // user's position stays stable across the shift.
     const chart = chartRef.current;
     const prevRange = chart && !isNewChart ? chart.timeScale().getVisibleRange() : null;
 
@@ -160,21 +95,28 @@ export function useChartDataFlow(args: Args) {
     volumeSeriesRef.current?.setData(volumeData);
     lastCandleRef.current = chartData[chartData.length - 1] ?? null;
     setLegend(legendFromSeries(chartData, volumeData));
+    console.log('[flow] prevRange', prevRange, 'newBounds', chartData[0]?.time, chartData[chartData.length - 1]?.time);
 
-    // Restore the visible time range if we had one.
+    // Restore the visible range, CLAMPED to the new data's time bounds.
+    // Without clamping, setVisibleRange throws when the previous view
+    // contained bars sliced out by the window shift — the old code caught
+    // the throw and let the chart auto-fit (the "too big zoom").
     if (prevRange && chart) {
-      try {
-        chart.timeScale().setVisibleRange(prevRange);
-      } catch {
-        // Range out of bounds after slice change — let the chart auto-fit.
+      const newFirst = chartData[0]!.time as unknown as number;
+      const newLast = chartData[chartData.length - 1]!.time as unknown as number;
+      const from = Math.max(prevRange.from as unknown as number, newFirst);
+      const to = Math.min(prevRange.to as unknown as number, newLast);
+      if (from < to) {
+        try {
+          chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time });
+        } catch {
+          // Clamped range still rejected — leave the chart where it landed.
+        }
       }
     }
 
     const buffered = latestLiveCandleRef.current;
-    if (!isNewChart) {
-      reapplyLive(buffered, ctx);
-      return;
-    }
+    if (!isNewChart) { reapplyLive(buffered, ctx); return; }
 
     scrollOrFit(chartRef.current, chartData.length);
     lastLoadKeyRef.current = loadKey;
@@ -185,41 +127,27 @@ export function useChartDataFlow(args: Args) {
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
     return scheduleStaleRefetch(chartData, ctx);
-  }, [
-    dataSig, volumeData, selectedSymbol, timeframe, makeRtCtx, setLegend,
-    candleSeriesRef, volumeSeriesRef, chartRef, lastCandleRef,
-  ]);
+  }, [dataSig, volumeData, selectedSymbol, timeframe, makeRtCtx, setLegend,
+      candleSeriesRef, volumeSeriesRef, chartRef, lastCandleRef]);
 
-  // ── 2. Live candle from server ──
-  // O(1) via series.update(). Safe to run on every server pulse.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !liveCandle || !lastCandleRef.current) return;
     applyServerCandle(liveCandle, makeRtCtx(series));
   }, [liveCandle, makeRtCtx, candleSeriesRef, lastCandleRef]);
 
-  // ── 3. Tick smoothing ──
-  // Merges bid/ask into the current bar between server pulses. Overwritten
-  // by the next applyServerCandle.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || !tick) return;
     applyTick(tick, makeRtCtx(series));
   }, [tick, makeRtCtx, candleSeriesRef]);
 
-  // ── 4. Bid/ask price lines ──
-  // applyBidAskLines moves existing lines in place (applyOptions), creating
-  // them only once — no remove+create churn per tick.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
     applyBidAskLines(tick, { showBidLine, showAskLine }, makeRtCtx(series));
   }, [tick, showBidLine, showAskLine, makeRtCtx, candleSeriesRef]);
 
-  // ── 5. Line-cross price alerts ──
-  // Fires a toast + beep when the mid price crosses an alert-enabled line.
-  // Drawings are read from the caller's `visibleDrawings` so alerts only
-  // fire for drawings shown on the current timeframe.
   useEffect(() => {
     if (!tick) return;
     const mid = (tick.bid + tick.ask) / 2;
@@ -234,10 +162,6 @@ export function useChartDataFlow(args: Args) {
     }
   }, [tick, selectedSymbol, pipDigits, drawings]);
 
-  // ── 6. Staleness watchdog ──
-  // Recovery path if CandleUpdates stop arriving (data-provider disconnect,
-  // aggregator restart). The live effects only run when their props change,
-  // so this interval is the only way to notice silence.
   useEffect(() => {
     if (isReplaying) return;
     const intervalSec = (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000;

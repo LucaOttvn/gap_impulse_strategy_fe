@@ -1,33 +1,26 @@
-import {
-  type CandlestickData,
-  createSeriesMarkers,
-  type IChartApi,
-  type ISeriesApi,
-  type SeriesMarker,
-  type Time,
-} from "lightweight-charts";
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useChartPreferences } from "../hooks/useChartPreferences.ts";
-import type { IndicatorType } from "../lib/indicators.ts";
-import { cn } from "../lib/utils.ts";
-import type { Candle, Order, Position, Symbol } from "../services/schemas.ts";
-import { toast } from "../services/toast.ts";
-import { CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe } from "../pages/trading/constants.ts";
-import { ChartContextMenu } from "./ChartContextMenu.tsx";
-import { buildReplayMarker } from "../pages/trading/chartReplayMarkers.ts";
-import { useIndicators } from "../pages/trading/useIndicators.ts";
-import { usePriceWheelZoom } from "../pages/trading/usePriceWheelZoom.ts";
-import { useSlTpDrag } from "../pages/trading/useSlTpDrag.ts";
-import { ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay } from "./ChartHud.tsx";
-import { ChartSettingsDialog } from "./ChartSettingsDialog.tsx";
-import { DrawingToolRail } from "./DrawingToolRail.tsx";
-import { DrawingContextMenu } from "./DrawingToolsOverlay.tsx";
-import { ChartRefs, useChartInstance } from "@/pages/trading/hooks/useChartInstance.ts";
-import { useChartLegend } from "@/pages/trading/hooks/useChartLegend.ts";
-import { useChartDataFlow } from "@/pages/trading/hooks/useChartDataFlow.ts";
-import { useChartAppearance } from "@/pages/trading/hooks/useChartAppearance.ts";
-import { useSlidingCandles } from "@/pages/trading/hooks/useSlidingCandles.ts";
-import { useChartOverlays } from "@/pages/trading/hooks/useChartOverlays.ts";
+import {type CandlestickData, createSeriesMarkers, type IChartApi, type ISeriesApi, type SeriesMarker, type Time} from "lightweight-charts";
+import {type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {useChartPreferences} from "../hooks/useChartPreferences.ts";
+import type {IndicatorType} from "../lib/indicators.ts";
+import {cn} from "../lib/utils.ts";
+import type {Candle, Order, Position, Symbol} from "../services/schemas.ts";
+import {toast} from "../services/toast.ts";
+import {CHART_COLORS, type DrawingLine, type DrawingTool, type MagnetMode, mergeChartColors, TF_INTERVAL_MS, type Timeframe} from "../pages/trading/constants.ts";
+import {ChartContextMenu} from "./ChartContextMenu.tsx";
+import {buildReplayMarker} from "../pages/trading/chartReplayMarkers.ts";
+import {useIndicators} from "../pages/trading/useIndicators.ts";
+import {usePriceWheelZoom} from "../pages/trading/usePriceWheelZoom.ts";
+import {useSlTpDrag} from "../pages/trading/useSlTpDrag.ts";
+import {ChartLegendHeader, DrawingOverlays, ObjectTreeOverlay} from "./ChartHud.tsx";
+import {ChartSettingsDialog} from "./ChartSettingsDialog.tsx";
+import {DrawingToolRail} from "./DrawingToolRail.tsx";
+import {DrawingContextMenu} from "./DrawingToolsOverlay.tsx";
+import {ChartRefs, useChartInstance} from "@/pages/trading/hooks/useChartInstance.ts";
+import {useChartLegend} from "@/pages/trading/hooks/useChartLegend.ts";
+import {useChartDataFlow} from "@/pages/trading/hooks/useChartDataFlow.ts";
+import {useChartAppearance} from "@/pages/trading/hooks/useChartAppearance.ts";
+import {useSlidingCandles} from "@/pages/trading/hooks/useSlidingCandles.ts";
+import {useChartOverlays} from "@/pages/trading/hooks/useChartOverlays.ts";
 
 export interface ChartPanelProps {
   /** Every loaded candle, oldest → newest. The sliding window slices this. */
@@ -51,15 +44,25 @@ export interface ChartPanelProps {
   orders: Order[];
   tick?: {bid: number; ask: number; timestamp: number};
   liveCandle?: {
-    open: number; high: number; low: number; close: number; volume: number; timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    timestamp: number;
   };
   pipDigits: number;
   symbolInfo?: Symbol;
   onModifyPosition?: (positionId: string, mods: {takeProfit?: number | null; stopLoss?: number | null}) => void;
   replayTradeEvents?: Array<{
-    id: string; type: "entry" | "exit" | "violation"; timestamp: string;
-    symbolName: string | null; side: string | null; price: number | null;
-    pnl: number | null; ruleCode?: string;
+    id: string;
+    type: "entry" | "exit" | "violation";
+    timestamp: string;
+    symbolName: string | null;
+    side: string | null;
+    price: number | null;
+    pnl: number | null;
+    ruleCode?: string;
   }>;
   activePlugins?: string[];
   onTogglePlugin?: (id: string) => void;
@@ -69,6 +72,8 @@ export interface ChartPanelProps {
   onClearDrawings?: () => void;
   onClearIndicators?: () => void;
   isReplaying?: boolean;
+  /** True while a page fetch is in flight — gates further onLoadMoreHistory calls. */
+  isFetchingOlder?: boolean;
   /** Called by the sliding window when the user scrolls past the oldest loaded bar. */
   onLoadMoreHistory?: () => void;
   /** False once the infinite query has no more history. */
@@ -108,6 +113,7 @@ export function ChartPanel({
   onClearDrawings,
   onClearIndicators,
   isReplaying = false,
+  isFetchingOlder = false,
   onLoadMoreHistory,
   canLoadMoreHistory = false,
 }: ChartPanelProps) {
@@ -115,10 +121,7 @@ export function ChartPanel({
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const chartRefs: ChartRefs = useMemo(
-    () => ({ chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef }),
-    [],
-  );
+  const chartRefs: ChartRefs = useMemo(() => ({chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef}), []);
 
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const legendVolRef = useRef<number>(0);
@@ -133,35 +136,35 @@ export function ChartPanel({
   const [showChartSettings, setShowChartSettings] = useState(false);
 
   const chartPrefs = useChartPreferences();
-  const colors = useMemo(
-    () => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs),
-    [isDark, chartPrefs],
-  );
-  const selectedDrawing = useMemo(
-    () => (selectedDrawingIds.length === 1 ? (drawings.find((d) => d.id === selectedDrawingIds[0]) ?? null) : null),
-    [drawings, selectedDrawingIds],
-  );
-  const visibleDrawings = useMemo(
-    () => drawings.filter((d) => !d.hidden && (d.visibility !== "tf" || d.createdTf === timeframe)),
-    [drawings, timeframe],
-  );
+  const colors = useMemo(() => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs), [isDark, chartPrefs]);
+  const selectedDrawing = useMemo(() => (selectedDrawingIds.length === 1 ? (drawings.find((d) => d.id === selectedDrawingIds[0]) ?? null) : null), [drawings, selectedDrawingIds]);
+  const visibleDrawings = useMemo(() => drawings.filter((d) => !d.hidden && (d.visibility !== "tf" || d.createdTf === timeframe)), [drawings, timeframe]);
 
-  const onAddDrawingRef = useRef(onAddDrawing); onAddDrawingRef.current = onAddDrawing;
-  const onUpdateDrawingRef = useRef(onUpdateDrawing); onUpdateDrawingRef.current = onUpdateDrawing;
-  const onRemoveDrawingRef = useRef(onRemoveDrawing); onRemoveDrawingRef.current = onRemoveDrawing;
-  const onDrawingCompleteRef = useRef(onDrawingComplete); onDrawingCompleteRef.current = onDrawingComplete;
-  const onDrawingToolSelectRef = useRef(onDrawingToolSelect); onDrawingToolSelectRef.current = onDrawingToolSelect;
-  const onUndoDrawingRef = useRef(onUndoDrawing); onUndoDrawingRef.current = onUndoDrawing;
-  const onRedoDrawingRef = useRef(onRedoDrawing); onRedoDrawingRef.current = onRedoDrawing;
+  const onAddDrawingRef = useRef(onAddDrawing);
+  onAddDrawingRef.current = onAddDrawing;
+  const onUpdateDrawingRef = useRef(onUpdateDrawing);
+  onUpdateDrawingRef.current = onUpdateDrawing;
+  const onRemoveDrawingRef = useRef(onRemoveDrawing);
+  onRemoveDrawingRef.current = onRemoveDrawing;
+  const onDrawingCompleteRef = useRef(onDrawingComplete);
+  onDrawingCompleteRef.current = onDrawingComplete;
+  const onDrawingToolSelectRef = useRef(onDrawingToolSelect);
+  onDrawingToolSelectRef.current = onDrawingToolSelect;
+  const onUndoDrawingRef = useRef(onUndoDrawing);
+  onUndoDrawingRef.current = onUndoDrawing;
+  const onRedoDrawingRef = useRef(onRedoDrawing);
+  onRedoDrawingRef.current = onRedoDrawing;
 
-  const onDrawingMenuOpened = useCallback(() => { drawingMenuOpenedRef.current = true; }, []);
+  const onDrawingMenuOpened = useCallback(() => {
+    drawingMenuOpenedRef.current = true;
+  }, []);
   const onDrawingContextMenu = useCallback((id: string, x: number, y: number) => {
     setSelectedDrawingIds([id]);
     setContextMenu({id, x, y});
   }, []);
 
   // ── 1. Chart instance ──
-  const { chartEpoch, drawingManagerRef } = useChartInstance({
+  const {chartEpoch, drawingManagerRef} = useChartInstance({
     containerRef,
     chartRefs,
     isDark,
@@ -202,10 +205,11 @@ export function ChartPanel({
     chartEpoch,
     onNeedOlder: onLoadMoreHistory,
     canLoadOlder: canLoadMoreHistory,
+    isFetchingOlder,
   });
 
   // ── 3. Legend + countdown ──
-  const { legend, countdown, setLegend } = useChartLegend({
+  const {legend, countdown, setLegend} = useChartLegend({
     chartRefs,
     chartEpoch,
     timeframe,
@@ -214,7 +218,7 @@ export function ChartPanel({
   });
 
   // ── 4. Realtime data pipeline ──
-  const { chartData } = useChartDataFlow({
+  const {chartData} = useChartDataFlow({
     chartRefs,
     colors,
     timeframe,
@@ -233,7 +237,7 @@ export function ChartPanel({
   });
 
   // ── 5. Overlays ──
-  const { slTpLinesRef } = useChartOverlays({
+  const {slTpLinesRef} = useChartOverlays({
     chartRefs,
     chartEpoch,
     colors,
@@ -253,14 +257,17 @@ export function ChartPanel({
   });
 
   // ── 6. Appearance ──
-  useChartAppearance({ chartRefs, chartEpoch, colors, timeframe, chartPrefs, drawingManagerRef });
+  useChartAppearance({chartRefs, chartEpoch, colors, timeframe, chartPrefs, drawingManagerRef});
 
   const dragPrice = useSlTpDrag(containerRef, chartRef, candleSeriesRef, slTpLinesRef, drawingTool, onModifyPosition, pipDigits, symbolInfo, chartEpoch);
   usePriceWheelZoom(containerRef, chartRef, candleSeriesRef, chartEpoch);
 
   const handleChartContextMenu = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (drawingMenuOpenedRef.current) { drawingMenuOpenedRef.current = false; return; }
+    if (drawingMenuOpenedRef.current) {
+      drawingMenuOpenedRef.current = false;
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const raw = candleSeriesRef.current?.coordinateToPrice(e.clientY - rect.top);
     const price = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
@@ -275,49 +282,67 @@ export function ChartPanel({
     chart.timeScale().scrollToRealTime();
   }, []);
 
-  const handleCopyPrice = useCallback((price: number) => {
-    const text = price.toFixed(pipDigits);
-    void navigator.clipboard?.writeText(text)
-      .then(() => toast.success("Copied", text))
-      .catch(() => toast.error("Copy failed", "Clipboard unavailable"));
-  }, [pipDigits]);
+  const handleCopyPrice = useCallback(
+    (price: number) => {
+      const text = price.toFixed(pipDigits);
+      void navigator.clipboard
+        ?.writeText(text)
+        .then(() => toast.success("Copied", text))
+        .catch(() => toast.error("Copy failed", "Clipboard unavailable"));
+    },
+    [pipDigits],
+  );
 
-  const handleAddAlert = useCallback((price: number) => {
-    const rounded = parseFloat(price.toFixed(pipDigits));
-    onAddDrawing({
-      id: crypto.randomUUID(), type: "horizontal", price: rounded,
-      color: "#f0b90b", alertEnabled: true, createdTf: timeframe,
-    });
-    toast.info("Alert set", `${selectedSymbol} at ${rounded}`);
-  }, [onAddDrawing, pipDigits, timeframe, selectedSymbol]);
+  const handleAddAlert = useCallback(
+    (price: number) => {
+      const rounded = parseFloat(price.toFixed(pipDigits));
+      onAddDrawing({
+        id: crypto.randomUUID(),
+        type: "horizontal",
+        price: rounded,
+        color: "#f0b90b",
+        alertEnabled: true,
+        createdTf: timeframe,
+      });
+      toast.info("Alert set", `${selectedSymbol} at ${rounded}`);
+    },
+    [onAddDrawing, pipDigits, timeframe, selectedSymbol],
+  );
 
   const handleCloneDrawing = useCallback(() => {
     const d = selectedDrawing;
     if (!d) return;
     const offsetSec = ((TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000) * 5;
     onAddDrawing({
-      ...d, id: crypto.randomUUID(),
+      ...d,
+      id: crypto.randomUUID(),
       time: d.time != null ? d.time + offsetSec : undefined,
       time2: d.time2 != null ? d.time2 + offsetSec : undefined,
     });
   }, [selectedDrawing, timeframe, onAddDrawing]);
 
-  const handleReorderDrawing = useCallback((d: DrawingLine, dir: "front" | "back") => {
-    const zs = drawings.map((x) => x.zIndex ?? 0);
-    const zIndex = dir === "front" ? Math.max(...zs, 0) + 1 : Math.min(...zs, 0) - 1;
-    onUpdateDrawing?.({...d, zIndex});
-  }, [drawings, onUpdateDrawing]);
+  const handleReorderDrawing = useCallback(
+    (d: DrawingLine, dir: "front" | "back") => {
+      const zs = drawings.map((x) => x.zIndex ?? 0);
+      const zIndex = dir === "front" ? Math.max(...zs, 0) + 1 : Math.min(...zs, 0) - 1;
+      onUpdateDrawing?.({...d, zIndex});
+    },
+    [drawings, onUpdateDrawing],
+  );
 
-  const handleObjectTreeSelect = useCallback((d: DrawingLine) => {
-    drawingManagerRef.current?.setSelection([d.id]);
-  }, [drawingManagerRef]);
+  const handleObjectTreeSelect = useCallback(
+    (d: DrawingLine) => {
+      drawingManagerRef.current?.setSelection([d.id]);
+    },
+    [drawingManagerRef],
+  );
 
   useIndicators(chartRef, candleSeriesRef, chartData, activeIndicators, isDark);
 
   useEffect(() => {
     const series = candleSeriesRef.current;
     const markers: SeriesMarker<Time>[] = [];
-    for (const ev of (replayTradeEvents || [])) {
+    for (const ev of replayTradeEvents || []) {
       const marker = buildReplayMarker(ev, timeframe);
       if (marker) markers.push(marker);
     }
@@ -329,7 +354,9 @@ export function ChartPanel({
     }
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     markersPlugin.setMarkers(markers);
-    return () => { markersPlugin.setMarkers([]); };
+    return () => {
+      markersPlugin.setMarkers([]);
+    };
   }, [replayTradeEvents, timeframe]);
 
   return (
@@ -347,10 +374,12 @@ export function ChartPanel({
 
       {dragPrice && (
         <div className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none" style={{top: dragPrice.y - 32}}>
-          <div className={cn(
-            "px-2 py-1 rounded text-[11px] font-mono font-bold shadow-lg border",
-            dragPrice.field === "TP" ? "bg-[#0ecb81]/20 text-[#0ecb81] border-[#0ecb81]/40" : "bg-[#f6465d]/20 text-[#f6465d] border-[#f6465d]/40",
-          )}>
+          <div
+            className={cn(
+              "px-2 py-1 rounded text-[11px] font-mono font-bold shadow-lg border",
+              dragPrice.field === "TP" ? "bg-[#0ecb81]/20 text-[#0ecb81] border-[#0ecb81]/40" : "bg-[#f6465d]/20 text-[#f6465d] border-[#f6465d]/40",
+            )}
+          >
             {dragPrice.field} → {dragPrice.price.toFixed(pipDigits)}
             <span className={dragPrice.pnlUsd >= 0 ? "ml-1.5 text-[#0ecb81]" : "ml-1.5 text-[#f6465d]"}>
               {dragPrice.pnlUsd >= 0 ? "+" : ""}${dragPrice.pnlUsd.toFixed(2)}

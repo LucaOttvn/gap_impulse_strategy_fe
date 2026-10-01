@@ -98,7 +98,7 @@ export function TradingPage() {
   const isFeedConnected = useIsFeedConnected();
 
   // -- FETCHING ENTRY POINT ----------------------------------------
-  const {allCandles, fetchOlder, hasOlder} = useInfiniteCandles(selectedSymbol, timeframe);
+  const {allCandles, fetchOlder, hasOlder, isFetchingOlder} = useInfiniteCandles(selectedSymbol, timeframe);
 
   // Positions, orders, journal.
   const {data: positions = []} = usePositions(activeAccountId);
@@ -188,6 +188,7 @@ export function TradingPage() {
               allCandles={allCandles}
               onLoadMoreHistory={fetchOlder}
               canLoadMoreHistory={hasOlder}
+              isFetchingOlder={isFetchingOlder}
               selectedSymbol={selectedSymbol}
               timeframe={timeframe}
               isDark={isDark}
