@@ -10,33 +10,74 @@ import { handleOperation, openPosition, Operation } from "./positionHandler";
 export const OPENING_WINDOW_SEC = 15 * 60;
 
 // ── Public options ────────────────────────────────────────
-// Everything configurable about the strategy lives here. Callers pass
-// a partial object; anything omitted falls back to the defaults below.
 export interface GapsImpulseStrategyOptions {
     /** EMA period. Default 21. */
     emaPeriod?: number;
 }
+
 export interface Fibonacci {
     orangeLine: PlotLineHandle;
     blueLine: PlotLineHandle;
     direction: Direction;
-    orangeLevel: number
-    blueLevel: number
+    orangeLevel: number;
+    blueLevel: number;
+}
+
+// ── Operation records ─────────────────────────────────────
+// One record per position the strategy opens. Emitted when the position
+// closes — either by hitting TP, hitting SL, or by being force-closed at
+// the end of the trading day.
+
+export type OperationOutcome = "tp" | "sl" | "dayEnd";
+
+export interface OperationRecord {
+    /** Unique id per record (uuid). */
+    id: string;
+    /** The NY trading day the position was opened on ("YYYY-MM-DD"). */
+    dayKey: string;
+    /** "bullish" = long, "bearish" = short. */
+    direction: Direction;
+    /** Which fib line triggered the entry. */
+    entryLineName: "blue" | "orange";
+    /** Price at which the position was opened. */
+    entryPrice: number;
+    /** Timestamp (seconds) of the bar at which the position was opened. */
+    entryTime: number;
+    /** Price at which the position was closed. */
+    exitPrice: number;
+    /** Timestamp (seconds) of the bar at which the position was closed. */
+    exitTime: number;
+    /** How the position closed. */
+    outcome: OperationOutcome;
+    /**
+     * PnL as a percentage of entry price. Positive = profitable.
+     *   +1 = +1% (TP hit on a long, or SL hit on a short)
+     *   -1 = -1% (SL hit on a long, or TP hit on a short)
+     *   anything else = dayEnd exit
+     */
+    pnlPct: number;
+}
+
+export interface StrategyResult {
+    /** Every primitive attached to the series (fib lines, TP/SL rects, EMA). */
+    primitives: ISeriesPrimitive<Time>[];
+    /** One record for every operation the strategy opened and closed. */
+    records: OperationRecord[];
 }
 
 /**
- * Returns every primitive that was attached to the series so the
- * caller can later detach them (e.g. when reloading data or switching
- * symbols). Primitives are never garbage-collected automatically —
- * if you forget to detach, they'll keep drawing on the old series.
+ * Returns every primitive that was attached to the series (so the caller
+ * can detach them later) plus a list of records — one per closed operation.
+ * The records are for stats (win rate, PnL), not for drawing.
  */
 export function drawGapsImpulseStrategy(
     candleSeries: ISeriesApi<"Candlestick">,
     candles: Candle[],
     options?: GapsImpulseStrategyOptions,
-): ISeriesPrimitive<Time>[] {
+): StrategyResult {
 
     const primitives: ISeriesPrimitive<Time>[] = [];
+    const records: OperationRecord[] = [];
     const emaPeriod = options?.emaPeriod ?? 21;
 
     let dayHighLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
@@ -45,10 +86,7 @@ export function drawGapsImpulseStrategy(
     const computeEma = createEMAHandler(emaPeriod);
     let currentOperation: Operation | undefined
 
-    // Running extremes for the current day. Seeded on the first candle
-    // of each day, then updated as new extremes are made. We use
-    // -Infinity / Infinity (rather than 0) so the very first candle
-    // always sets them, regardless of price scale.
+    // Running extremes for the current day.
     let runningHigh = -Infinity;
     let runningLow = Infinity;
     let currentDayStart: {
@@ -56,22 +94,9 @@ export function drawGapsImpulseStrategy(
         dateKey: string
     } | null = null;
 
-    // ── Fibonacci lines (one direction per day) ─────────────
-    // The first valid gap of the day decides the direction
-    //
-    // Once a direction is locked in, later gaps of either kind still
-    // produce rectangles but do NOT switch or add fib lines — the
-    // "first gap wins" rule. The lock resets at each day boundary.
-    //
-    // The handles start as `null` because they must only exist once
-    // a gap has been detected. Before that, no fib line should be
-    // drawn at all.
+    // Active fib for the day.
     let activeFib: Fibonacci | null = null;
 
-    // Flush every open handle at the end of a day (or the series).
-    // `finish()` is what actually attaches the accumulated segment to
-    // the series — until it runs, the points are held in memory and
-    // nothing is drawn.
     const finishDay = () => {
         primitives.push(...dayHighLine.finish());
         primitives.push(...dayLowLine.finish());
@@ -79,6 +104,44 @@ export function drawGapsImpulseStrategy(
             primitives.push(...activeFib.orangeLine.finish());
             primitives.push(...activeFib.blueLine.finish());
         }
+    };
+
+    // ── Emit a record when an operation closes ──
+    // Called from three places:
+    //   1. handleOperation returns a TP/SL hit
+    //   2. The day boundary is crossed while a position is still open
+    //   3. The loop ends while a position is still open
+    const emitRecord = (
+        op: Operation,
+        exitPrice: number,
+        exitTime: number,
+        outcome: OperationOutcome,
+    ) => {
+        if (
+            op.openPrice === undefined ||
+            op.entryTime === undefined ||
+            op.entryLineName === undefined
+        ) return;
+
+        const entry = op.openPrice;
+        // Long:  profit = (exit - entry) / entry
+        // Short: profit = (entry - exit) / entry
+        const pnlPct = op.direction === "bullish"
+            ? ((exitPrice - entry) / entry) * 100
+            : ((entry - exitPrice) / entry) * 100;
+
+        records.push({
+            id: crypto.randomUUID(),
+            dayKey: currentDayStart?.dateKey ?? "",
+            direction: op.direction,
+            entryLineName: op.entryLineName,
+            entryPrice: entry,
+            entryTime: op.entryTime,
+            exitPrice,
+            exitTime,
+            outcome,
+            pnlPct,
+        });
     };
 
     // ── Main loop ───────────────────────────────────────────
@@ -94,6 +157,23 @@ export function drawGapsImpulseStrategy(
         // todayKey !== currentDayStart.dateKey => detect day change
         if (currentDayStart === null || todayKey !== currentDayStart.dateKey) {
 
+            // Close out any operation still open from the previous day.
+            // The last candle of that day is `candles[i - 1]`.
+            const prevCandle = i > 0 ? candles[i - 1] : null;
+            if (
+                prevCandle &&
+                currentOperation &&
+                currentOperation.currentlyOpen &&
+                !currentOperation.completed
+            ) {
+                emitRecord(
+                    currentOperation,
+                    prevCandle.close,
+                    prevCandle.time as number,
+                    "dayEnd",
+                );
+            }
+
             // Close out yesterday's lines, if any.
             if (currentDayStart !== null) finishDay();
             currentDayStart = {
@@ -101,25 +181,15 @@ export function drawGapsImpulseStrategy(
                 dateKey: todayKey
             };
 
-            // Fresh handles for the new day. The old ones have already
-            // been `finish()`ed, so they're now inert and can be dropped.
             dayHighLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
             dayLowLine = createPlotLine(candleSeries, { color: "#ffffff", mode: "step" });
 
-            // Seed the running extremes with this candle. Without this,
-            // the first candle would compare its high/low against the
-            // previous day's running values, which is wrong.
             runningHigh = first.high;
             runningLow = first.low;
 
-            // Reset the fib lock. Whichever gap we detect next — bullish
-            // or bearish — will claim the direction for the whole day.
             activeFib = null;
             currentOperation = undefined
         } else {
-            // Not a new day: extend the running extremes if this candle
-            // broke them. This is what makes the day-high/low lines
-            // "step" upward/downward as the session progresses.
             if (first.high > runningHigh) runningHigh = first.high;
             if (first.low < runningLow) runningLow = first.low;
         }
@@ -127,8 +197,6 @@ export function drawGapsImpulseStrategy(
         // ── EMA update ──────────────────────────────────────
         const currentEMA = computeEma(first);
         if (currentEMA.newDay) {
-            // Flush the previous day's segment so the line stops there.
-            // `null` is `na` in createPlotLine's API.
             emaLine.add(first.time, null);
         }
         emaLine.add(first.time, currentEMA.value);
@@ -136,7 +204,6 @@ export function drawGapsImpulseStrategy(
         // ── Gap detection ───────────────────────────────────
         let newGap: Gap | null = handleGap(first, third, currentDayStart.time, candleSeries, primitives, runningHigh, runningLow);
 
-        // Handle first gap of the day
         if (newGap && !activeFib) {
             activeFib = {
                 orangeLine: createPlotLine(candleSeries, { color: "#f59e0b", mode: "step" }),
@@ -167,13 +234,10 @@ export function drawGapsImpulseStrategy(
         activeFib.blueLine.add(third.time, activeFib.blueLevel);
 
         // ── Entry trigger ───────────────────────────────────────
-        // If an operation hasn't been defined yet, start to set it
         if (currentOperation === undefined) {
             if (activeFib.direction === "bullish") {
-                // Detect blue line touch
                 if (third.low <= activeFib.blueLevel) {
                     if (currentEMA !== null && currentEMA.value > activeFib.blueLevel) {
-                        // Immediate blue entry.
                         currentOperation = {
                             currentlyOpen: false,
                             entryLevel: {
@@ -186,7 +250,6 @@ export function drawGapsImpulseStrategy(
                         openPosition(third, currentOperation, candleSeries, primitives)
                         continue
                     } else {
-                        // Wait for orange.
                         currentOperation = {
                             currentlyOpen: false,
                             entryLevel: {
@@ -200,10 +263,8 @@ export function drawGapsImpulseStrategy(
                     }
                 }
             } else if (activeFib.direction === "bearish") {
-                // Detect blue line touch
                 if (third.high >= activeFib.blueLevel) {
                     if (currentEMA !== null && currentEMA.value < activeFib.blueLevel) {
-                        // Immediate blue entry.
                         currentOperation = {
                             currentlyOpen: false,
                             entryLevel: {
@@ -217,7 +278,6 @@ export function drawGapsImpulseStrategy(
                         continue
                     }
                     else {
-                        // Wait for orange.
                         currentOperation = {
                             currentlyOpen: false,
                             entryLevel: undefined,
@@ -230,11 +290,7 @@ export function drawGapsImpulseStrategy(
             }
         }
 
-        // Null checks
         if (!currentOperation) continue
-
-        // If the operation of the day is done already, skip everything below
-        // No operation will be opened/handled until the next day
         if (currentOperation.completed) continue
 
         // Detect orange line touch
@@ -247,7 +303,6 @@ export function drawGapsImpulseStrategy(
                 openPosition(third, currentOperation, candleSeries, primitives)
             }
         }
-        // Detect orange line touch
         if (!currentOperation.currentlyOpen && currentOperation.direction === "bearish") {
             if (third.high >= activeFib.orangeLevel) {
                 currentOperation.entryLevel = {
@@ -258,18 +313,31 @@ export function drawGapsImpulseStrategy(
             }
         }
 
-        handleOperation(third, currentOperation);
+        // ── Handle TP/SL ──
+        const close = handleOperation(third, currentOperation);
+        if (close) {
+            emitRecord(currentOperation, close.exitPrice, third.time as number, close.outcome);
+        }
     }
 
-    // Flush whatever was still open on the final day. Without this,
-    // the last day's lines would never be attached to the series.
-    if (currentDayStart !== null) finishDay();
+    // ── After the loop: close any still-open operation ──
+    const lastCandle = candles[candles.length - 1];
+    if (
+        lastCandle &&
+        currentOperation &&
+        currentOperation.currentlyOpen &&
+        !currentOperation.completed
+    ) {
+        emitRecord(
+            currentOperation,
+            lastCandle.close,
+            lastCandle.time as number,
+            "dayEnd",
+        );
+    }
 
-    // The EMA spans the entire series, so it gets exactly one
-    // `finish()` here — never inside the day-boundary block. If it
-    // were flushed per-day, we'd get N disconnected EMA segments
-    // instead of one smooth line across the whole dataset.
+    if (currentDayStart !== null) finishDay();
     if (emaLine) primitives.push(...emaLine.finish());
 
-    return primitives;
+    return { primitives, records };
 }

@@ -12,7 +12,10 @@ import {
 import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../chartPlugins";
 import type { RtCtx } from "../chartRealtime";
 import { useChallengeLevels } from "../useChallengeLevels";
-import { drawGapsImpulseStrategy } from "@/services/utils/strategy";
+import {
+  drawGapsImpulseStrategy,
+  type OperationRecord,
+} from "@/services/utils/strategy";
 import { highlightOpenWindow } from "@/services/utils/openWindow";
 import type { ChartRefs } from "./useChartInstance";
 
@@ -42,6 +45,11 @@ interface Args {
   activePlugins: string[];
   isDark: boolean;
   chartPrefs: ChartPrefsSlice;
+  /**
+   * Called every time the strategy re-runs and produces a fresh list of
+   * operation records. Use this to feed a stats UI (win rate, PnL, etc.).
+   */
+  onRecordsChange?: (records: OperationRecord[]) => void;
 }
 
 /**
@@ -52,12 +60,14 @@ interface Args {
  *   • challenge-aware rule levels
  *
  * Returns `slTpLinesRef` — the map the drag hook reads to move SL/TP lines.
+ * Returns `recordsRef` — the latest list of operation records from the
+ * strategy. Read `recordsRef.current` at any time (no re-render triggered).
  */
 export function useChartOverlays(args: Args) {
   const {
     chartRefs, chartEpoch, colors, selectedSymbol, timeframe, symbolInfo,
     positions, orders, accountId, accountEquity, tick, candles, chartData,
-    activePlugins, isDark, chartPrefs,
+    activePlugins, isDark, chartPrefs, onRecordsChange,
   } = args;
 
   const { candle: candleSeriesRef } = chartRefs;
@@ -70,16 +80,16 @@ export function useChartOverlays(args: Args) {
   const dayOpenBandRef = useRef<ISeriesPrimitive<Time>[]>([]);
   const dayLevelsRef = useRef<ISeriesPrimitive<Time>[]>([]);
 
+  // Latest operation records from the strategy. Populated every time the
+  // strategy re-runs; read by the parent via the returned ref.
+  const recordsRef = useRef<OperationRecord[]>([]);
+
+  // Stable ref for the callback so the strategy effect doesn't re-run when
+  // the parent passes a new function identity.
+  const onRecordsChangeRef = useRef(onRecordsChange);
+  onRecordsChangeRef.current = onRecordsChange;
+
   // ── Content signature for the strategy primitives ──
-  // The effect below originally depended on `candles` identity, which changes
-  // on every refetch, every parent re-render, and every placeholderData swap —
-  // even when the bars themselves are identical. Both drawGapsImpulseStrategy
-  // and highlightOpenWindow iterate the entire array, so re-running them on a
-  // no-op change is pure waste. This signature (count + first + last bar time)
-  // is a cheap proxy for "the shape of the series actually changed."
-  //
-  // It intentionally does NOT include the last bar's OHLC — a live tick that
-  // grows the current candle shouldn't rebuild the whole strategy overlay.
   const lastCandleSigRef = useRef<string>("");
   const candleSig = candles.length === 0
     ? ""
@@ -140,10 +150,9 @@ export function useChartOverlays(args: Args) {
   ]);
 
   // ── Strategy primitives (gap-impulse + NY session open band) ──
-  // Gated on `candleSig` instead of `candles` so a refetch that returns the
-  // same bars, or a parent re-render with a new array reference, doesn't
-  // rebuild the primitives. Rebuild only happens when the series' shape
-  // actually changes (initial load, pagination, symbol/TF switch, theme).
+  // drawGapsImpulseStrategy now returns { primitives, records }. The
+  // records list is captured into recordsRef and forwarded to the parent
+  // via onRecordsChange.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series || candles.length === 0) return;
@@ -157,7 +166,11 @@ export function useChartOverlays(args: Args) {
       dayLevelsRef.current,
     ]);
 
-    strategyPrimitivesRef.current = drawGapsImpulseStrategy(series, candles);
+    const result = drawGapsImpulseStrategy(series, candles);
+    strategyPrimitivesRef.current = result.primitives;
+    recordsRef.current = result.records;
+    onRecordsChangeRef.current?.(result.records);
+
     dayOpenBandRef.current = highlightOpenWindow(series, candles, {
       minutes: 15,
       timeZone: "America/New_York",
@@ -175,5 +188,5 @@ export function useChartOverlays(args: Args) {
     attachPlugins(series, activePlugins, { isDark, timeframe, symbolCategory }, chartPluginsRef.current);
   }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory, candleSeriesRef]);
 
-  return { slTpLinesRef };
+  return { slTpLinesRef, recordsRef };
 }

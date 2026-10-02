@@ -21,6 +21,8 @@ import {useChartDataFlow} from "@/pages/trading/hooks/useChartDataFlow.ts";
 import {useChartAppearance} from "@/pages/trading/hooks/useChartAppearance.ts";
 import {useSlidingCandles} from "@/pages/trading/hooks/useSlidingCandles.ts";
 import {useChartOverlays} from "@/pages/trading/hooks/useChartOverlays.ts";
+import {OperationRecord} from "@/services/utils/strategy.ts";
+import { computeOperationStats } from "@/services/utils/operationStats.ts";
 
 export interface ChartPanelProps {
   /** Every loaded candle, oldest → newest. The sliding window slices this. */
@@ -240,6 +242,8 @@ export function ChartPanel({
     legendVolRef,
   });
 
+  const [records, setRecords] = useState<OperationRecord[]>([]);
+
   // ── 5. Overlays ──
   const {slTpLinesRef} = useChartOverlays({
     chartRefs,
@@ -258,7 +262,10 @@ export function ChartPanel({
     activePlugins,
     isDark,
     chartPrefs,
+    onRecordsChange: setRecords,
   });
+
+  const stats = useMemo(() => computeOperationStats(records), [records]);
 
   // ── 6. Appearance ──
   useChartAppearance({chartRefs, chartEpoch, colors, timeframe, chartPrefs, drawingManagerRef});

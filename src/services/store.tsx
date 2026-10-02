@@ -275,6 +275,9 @@ function _pipDecimals(tickSize?: number | null): number {
   return dot >= 0 ? s.length - dot - 1 : 2;
 }
 
+/** Which top-level view the app is showing. Swapped by the toolbar / backtest page. */
+export type AppView = "trading" | "backtest";
+
 interface TradingState {
   activeAccountId: string | null;
   accounts: Account[];
@@ -303,6 +306,8 @@ interface TradingState {
   replayCursorTimestamp: number | null;
   /** Session date (YYYY-MM-DD) of the active replay, set when replay starts. */
   replaySessionDate: string | null;
+  /** Which top-level view is active. */
+  view: AppView;
 
   setActiveAccount: (id: string) => void;
   loadAccounts: () => Promise<void>;
@@ -319,6 +324,8 @@ interface TradingState {
   setReplaySessionDate: (date: string | null) => void;
   /** Bump replay version and update replay state — call on ReplayStateChanged WS events */
   onReplayStateChanged: (action: string, opts?: {speed?: number; cursorTimestamp?: number}) => void;
+  /** Swap the active top-level view. */
+  setView: (v: AppView) => void;
 }
 
 export const useTradingStore = create<TradingState>((set, get) => ({
@@ -337,6 +344,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   replaySpeed: 1,
   replayCursorTimestamp: null,
   replaySessionDate: null,
+  view: "trading",
 
   setActiveAccount: (id) => {
     localStorage.setItem("active_account", id);
@@ -463,6 +471,8 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   onReplayStateChanged: (action, opts) => {
     set((state) => nextReplayState(state, action, opts));
   },
+
+  setView: (v) => set({view: v}),
 }));
 
 /**

@@ -8,15 +8,21 @@ import { GapRectanglePrimitive } from "./primitives";
 // not from the browser's clock, so the rule holds no matter where the
 // code runs.
 const NO_OPEN_AFTER_HOUR = 18;
-const TZ = "Europe/Rome";
 
 export interface Operation {
     currentlyOpen: boolean;
-    completed: boolean;   // ← new
+    completed: boolean;
     entryLevel: EntryLevel | undefined;
     direction: Direction;
     tpRect?: GapRectanglePrimitive;
     slRect?: GapRectanglePrimitive;
+    // ── Fields captured for the operation record ──
+    /** Timestamp of the bar at which the position was opened. */
+    entryTime?: number;
+    /** Which fib line triggered the entry. */
+    entryLineName?: "blue" | "orange";
+    /** Entry price, copied from entryLevel.price at open time. */
+    openPrice?: number;
 }
 
 export interface EntryLevel {
@@ -24,7 +30,15 @@ export interface EntryLevel {
     lineName: "blue" | "orange" | undefined
 }
 
-// "2026-09-26T15:30:00"
+/**
+ * Return shape for handleOperation when a position closes.
+ * `outcome` distinguishes a TP hit from an SL hit; `exitPrice` is
+ * the level that was touched.
+ */
+export interface OperationClose {
+    outcome: "tp" | "sl";
+    exitPrice: number;
+}
 
 export function openPosition(
     currentCandle: Candle,
@@ -61,21 +75,30 @@ export function openPosition(
     currentOperation.tpRect = tpRect;
     currentOperation.slRect = slRect;
     currentOperation.currentlyOpen = true;
-    currentOperation.entryLevel.lineName = undefined;
 
+    // ── Capture metadata for the record ──
+    // Save the entry line name BEFORE it's cleared below, so the emitted
+    // record can say whether this position came from a blue or orange touch.
+    currentOperation.entryLineName = currentOperation.entryLevel.lineName;
+    currentOperation.openPrice = entry;
+    currentOperation.entryTime = currentCandle.time as number;
+
+    currentOperation.entryLevel.lineName = undefined;
 }
 
 export function handleOperation(
     currentCandle: Candle,
-    currentOperation: Operation
-): void {
-    if (!currentOperation.tpRect || !currentOperation.slRect) return
+    currentOperation: Operation,
+): OperationClose | null {
+    if (!currentOperation.tpRect || !currentOperation.slRect) return null;
 
     const t = currentCandle.time as Time;
     currentOperation.tpRect.setEndTime(t);
     currentOperation.slRect.setEndTime(t);
 
-    const entry = currentOperation.entryLevel?.price!;
+    const entry = currentOperation.entryLevel?.price;
+    if (entry === undefined) return null;
+
     const isLong = currentOperation.direction === "bullish";
     const tp = isLong ? entry * 1.01 : entry * 0.99;
     const sl = isLong ? entry * 0.99 : entry * 1.01;
@@ -85,5 +108,10 @@ export function handleOperation(
     if (hitTp || hitSl) {
         currentOperation.currentlyOpen = false;
         currentOperation.completed = true;
+        return {
+            outcome: hitTp ? "tp" : "sl",
+            exitPrice: hitTp ? tp : sl,
+        };
     }
+    return null;
 }
