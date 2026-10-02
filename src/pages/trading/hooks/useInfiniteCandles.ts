@@ -3,14 +3,14 @@ import { getCandlesInRange, type CandleRangeResult } from "../../../services/api
 import type { Candle } from "../../../services/schemas";
 
 // Bars-per-page, expressed as a time window per timeframe. Sized so each page
-// is ~2k bars — fast to fetch, and small enough that five pages fit
-// comfortably in the 10k-bar render window.
+// is ~2k bars — fast to fetch, and small enough that a few pages fit
+// comfortably in the sliding render window.
 const PAGE_WINDOW_MS: Record<string, number> = {
-  "1m":  7  * 86_400_000,   // ~2,700 RTH bars
-  "5m":  30 * 86_400_000,   // ~2,300
-  "15m": 90 * 86_400_000,   // ~2,300
-  "30m": 180 * 86_400_000,  // ~2,300
-  "1h":  365 * 86_400_000,  // ~1,600
+  "1m":  7  * 86_400_000,
+  "5m":  30 * 86_400_000,
+  "15m": 90 * 86_400_000,
+  "30m": 180 * 86_400_000,
+  "1h":  365 * 86_400_000,
   "4h":  730 * 86_400_000,
   "1d":  1825 * 86_400_000,
   "1w":  3650 * 86_400_000,
@@ -21,8 +21,10 @@ export interface InfiniteCandlesResult {
   allCandles: Candle[];
   /** Triggers a fetch of the next (older) page. */
   fetchOlder: () => void;
-  /** True while a fetch is in flight. */
+  /** True while the NEXT (older) page is being fetched. */
   isFetchingOlder: boolean;
+  /** True during the very first page load — no data has arrived yet. */
+  isInitialLoading: boolean;
   /** False once an empty page came back — no more history. */
   hasOlder: boolean;
 }
@@ -79,6 +81,7 @@ export function useInfiniteCandles(
     allCandles,
     fetchOlder: () => { void query.fetchNextPage(); },
     isFetchingOlder: query.isFetchingNextPage,
+    isInitialLoading: query.isLoading,
     hasOlder: !!query.hasNextPage,
   };
 }

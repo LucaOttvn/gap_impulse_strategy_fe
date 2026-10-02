@@ -74,6 +74,9 @@ export interface ChartPanelProps {
   isReplaying?: boolean;
   /** True while a page fetch is in flight — gates further onLoadMoreHistory calls. */
   isFetchingOlder?: boolean;
+  /** True while candles are loading — either the first page or a scroll-back
+   *  fetch. Drives the blurred loading overlay that covers the chart. */
+  isLoadingCandles?: boolean;
   /** Called by the sliding window when the user scrolls past the oldest loaded bar. */
   onLoadMoreHistory?: () => void;
   /** False once the infinite query has no more history. */
@@ -114,6 +117,7 @@ export function ChartPanel({
   onClearIndicators,
   isReplaying = false,
   isFetchingOlder = false,
+  isLoadingCandles = false,
   onLoadMoreHistory,
   canLoadMoreHistory = false,
 }: ChartPanelProps) {
@@ -371,6 +375,21 @@ export function ChartPanel({
         showOhlcLegend={chartPrefs.showOhlcLegend}
         showCountdown={chartPrefs.showCountdown}
       />
+
+      {/* Loading overlay — covers the chart with a blurred, tinted backdrop
+          whenever candles are being fetched. Visible on:
+            • initial mount (first page load)
+            • scroll-back fetches (loading older bars)
+          Blocks interaction so the user can't draw/pan while the data is
+          settling. Fades naturally with the CSS backdrop-blur transition. */}
+      {isLoadingCandles && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center backdrop-blur-sm bg-background/50">
+          <div className="flex flex-col items-center gap-3 px-6 py-5 rounded-2xl bg-card border border-border shadow-2xl">
+            <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <span className="text-xs font-mono text-muted-foreground">loading candles…</span>
+          </div>
+        </div>
+      )}
 
       {dragPrice && (
         <div className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none" style={{top: dragPrice.y - 32}}>
