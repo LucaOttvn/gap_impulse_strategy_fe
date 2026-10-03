@@ -34,6 +34,8 @@ export async function getCandlesInRange(
     dayLow: number | null;
     orangeLine: number | null;
     blueLine: number | null;
+    ema: number | null;
+    emaNewDay: boolean | null;
   }>;
 
   if (!Array.isArray(raw)) return [];
@@ -50,5 +52,7 @@ export async function getCandlesInRange(
     dayLow: c.dayLow ?? NaN,
     orangeLine: c.orangeLine ?? NaN,
     blueLine: c.blueLine ?? NaN,
+    ema: c.ema ?? NaN,
+    emaNewDay: c.emaNewDay ?? false
   }));
 }

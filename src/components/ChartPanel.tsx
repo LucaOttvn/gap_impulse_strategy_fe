@@ -14,6 +14,7 @@ import type { DrawingToolsManager } from "@/lib/chart-plugins/drawing-tools/mana
 import { useDayLevels } from "@/pages/trading/hooks/01_useDayLevels.ts";
 import { StrategyCandle } from "@/services/utils/01_interfaces.ts";
 import { useFibLines } from "@/pages/trading/hooks/03_useFibLines.ts";
+import { useEmaLine } from "@/pages/trading/hooks/04_useEmaLine.ts";
 
 export interface ChartPanelProps {
   /** Every loaded candle, oldest → newest. The sliding window slices this. */
@@ -152,6 +153,7 @@ export function ChartPanel(props: ChartPanelProps) {
   // Reads orangeLine/blueLine from each enriched candle. NaN → null, which
   // breaks the step line on candles before the first qualifying gap.
   useFibLines(chartRefs, visibleCandles, chartEpoch);
+  useEmaLine(chartRefs, visibleCandles, chartEpoch)
 
   // ── 3. Legend + countdown ──
   const {legend, countdown, setLegend} = useChartLegend({

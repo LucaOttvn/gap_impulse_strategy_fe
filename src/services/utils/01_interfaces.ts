@@ -5,4 +5,6 @@ export interface StrategyCandle extends Candle {
   dayLow: number
   orangeLine: number
   blueLine: number
+  ema: number
+  emaNewDay: boolean
 }
