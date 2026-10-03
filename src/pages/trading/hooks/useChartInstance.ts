@@ -9,11 +9,15 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from "lightweight-charts";
-import { DrawingLine, DrawingTool, MagnetMode, TF_INTERVAL_MS, Timeframe } from "../constants";
-import { DrawingToolsManager } from "@/lib/chart-plugins/drawing-tools/manager";
-import { getStyleDefaults, DRAWING_STYLES_EVENT } from "../drawingStyles";
+import { Timeframe } from "../constants";
 import { getMinMove } from "../utils";
 
+/**
+ * Shared handles to the three things this hook creates. Passed in by the
+ * caller (rather than returned) so every other chart hook in the stack can
+ * read the same refs without prop-drilling. The hook mutates them in place:
+ * assigns on create, nulls on teardown.
+ */
 export interface ChartRefs {
   chart: React.RefObject<IChartApi | null>;
   candle: React.RefObject<ISeriesApi<"Candlestick"> | null>;
@@ -21,87 +25,62 @@ export interface ChartRefs {
 }
 
 interface Args {
-  // Persistent refs shared with the other hooks.
   containerRef: React.RefObject<HTMLDivElement | null>;
   chartRefs: ChartRefs;
 
-  // Values the chart instance is created with. Changing any of these
-  // recreates the whole chart (and bumps chartEpoch).
+  // ── Inputs that recreate the chart ────────────────────────────────────
+  // Everything below is in the effect's dep array. Changing any of them
+  // tears down the current chart and builds a fresh one. That's a heavy
+  // operation (new canvas, new series, all other hooks re-attach), so this
+  // list is deliberately as short as it can be.
   isDark: boolean;
   pipDigits: number;
   selectedSymbol: string;
-  colors: { background: string; text: string; grid: string; crosshair: string;
-            watermark: string; up: string; down: string };
+  colors: {
+    background: string; text: string; grid: string; crosshair: string;
+    watermark: string; up: string; down: string;
+  };
 
-  // Values the DrawingToolsManager reads continuously. Changing these does
-  // NOT recreate the chart — we mirror them into refs the manager checks
-  // on every interaction.
+  // ── Input that does NOT recreate the chart ────────────────────────────
+  // Timeframe only affects two create-time options (secondsVisible,
+  // rightOffset) and the drawing manager's snap interval. It's read via a
+  // ref so switching timeframes doesn't blow away the chart — the chart
+  // just starts rendering whatever series data the parent feeds it.
   timeframe: Timeframe;
-  drawingTool: DrawingTool;
-  magnetMode: MagnetMode;
-  stayInDrawingMode: boolean;
-  accountEquity: number;
-  drawings: DrawingLine[];
-
-  // Drawing callbacks. Passed as refs by the parent so the create-effect
-  // doesn't depend on their identity.
-  onAddDrawingRef: React.RefObject<(d: DrawingLine) => void>;
-  onUpdateDrawingRef: React.RefObject<((d: DrawingLine) => void) | undefined>;
-  onRemoveDrawingRef: React.RefObject<((id: string) => void) | undefined>;
-  onDrawingCompleteRef: React.RefObject<(() => void) | undefined>;
-  onDrawingToolSelectRef: React.RefObject<((t: DrawingTool) => void) | undefined>;
-  onUndoDrawingRef: React.RefObject<(() => void) | undefined>;
-  onRedoDrawingRef: React.RefObject<((() => void) | undefined) | undefined>;
-
-  // Drawing UI callbacks (already stable — provided by ChartPanel's useState).
-  onDrawingMenuOpened: () => void;
-  onDrawingSelectionChange: (ids: string[]) => void;
-  onDrawingRequestSettings: (id: string) => void;
-  onDrawingContextMenu: (id: string, x: number, y: number) => void;
 }
 
 export function useChartInstance(args: Args) {
   const {
     containerRef, chartRefs,
-    isDark, pipDigits, selectedSymbol, colors,
-    timeframe, drawingTool, magnetMode, stayInDrawingMode, accountEquity, drawings,
-    onAddDrawingRef, onUpdateDrawingRef, onRemoveDrawingRef, onDrawingCompleteRef,
-    onDrawingToolSelectRef, onUndoDrawingRef, onRedoDrawingRef,
-    onDrawingMenuOpened, onDrawingSelectionChange, onDrawingRequestSettings,
-    onDrawingContextMenu,
+    isDark, pipDigits, selectedSymbol, colors, timeframe,
   } = args;
 
+  // Destructured out of chartRefs so we can write to them without the
+  // `chartRefs.chart.current = ...` indirection.
   const { chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef } = chartRefs;
 
-  // Timeframe is read at chart-create time (for `secondsVisible`, `rightOffset`,
-  // and the drawing manager's snap interval). Keeping it in a ref lets the
-  // create-effect see the current TF without listing it as a dependency —
-  // otherwise the chart would be torn down and rebuilt on every TF switch.
+  // Read at chart-create time only. Kept in a ref so the effect doesn't
+  // rebuild the chart when the user switches timeframes.
   const timeframeRef = useRef(timeframe);
   timeframeRef.current = timeframe;
 
-  // Values the DrawingToolsManager reads on every user interaction. Mirrored
-  // into refs so the create-effect doesn't need to re-run when they change.
-  const drawingToolRef = useRef(drawingTool); drawingToolRef.current = drawingTool;
-  const drawingsRef = useRef(drawings); drawingsRef.current = drawings;
-  const magnetRef = useRef(magnetMode); magnetRef.current = magnetMode;
-  const stayInModeRef = useRef(stayInDrawingMode); stayInModeRef.current = stayInDrawingMode;
-  const accountEquityRef = useRef(accountEquity); accountEquityRef.current = accountEquity;
-
-  // The DrawingToolsManager instance. Exposed to ChartPanel so the object-tree
-  // UI can call setSelection() on it.
-  const drawingManagerRef = useRef<DrawingToolsManager | null>(null);
-
-  // Bumps on every chart recreation. Other hooks depend on this to re-attach
-  // their crosshair/range subscriptions to the fresh chart.
+  // Bumped every time the effect recreates the chart. Other hooks
+  // (legend, data flow, appearance, overlays) depend on this so they know
+  // to detach from the old chart and re-attach to the new one.
   const [chartEpoch, setChartEpoch] = useState(0);
 
   useEffect(() => {
+    // The container is rendered by the caller. If it isn't mounted yet,
+    // there's nothing to attach a chart to — bail. (This shouldn't happen
+    // in practice since the container is rendered synchronously, but the
+    // guard also satisfies TS.)
     if (!containerRef.current) return;
 
+    // Derived from pipDigits: the smallest price increment the series will
+    // display. Used for tick alignment and price formatting.
     const minMove = getMinMove(pipDigits);
 
-    // ── 1. Create the chart ───────────────────────────────────
+    // ── Chart ─────────────────────────────────────────────────────────
     const chart = createChart(containerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: colors.background },
@@ -122,6 +101,8 @@ export function useChartInstance(args: Args) {
       },
       rightPriceScale: {
         borderColor: colors.grid,
+        // Leave room at the bottom of the price scale for the volume
+        // histogram, which draws on its own scale overlaid on the same pane.
         scaleMargins: { top: 0.06, bottom: 0.18 },
         autoScale: true,
         alignLabels: true,
@@ -131,6 +112,8 @@ export function useChartInstance(args: Args) {
       timeScale: {
         borderColor: colors.grid,
         timeVisible: true,
+        // On 1m, show seconds and give the right edge a bit more offset so
+        // the newest bar isn't glued to the axis.
         secondsVisible: timeframeRef.current === "1m",
         rightOffset: timeframeRef.current === "1m" ? 10 : 6,
         minBarSpacing: 0.5,
@@ -143,20 +126,24 @@ export function useChartInstance(args: Args) {
     });
     chartRef.current = chart;
 
-    // ── 2. Candle series ──────────────────────────────────────
+    // ── Candle series ─────────────────────────────────────────────────
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: colors.up, downColor: colors.down,
       borderUpColor: colors.up, borderDownColor: colors.down,
       wickUpColor: colors.up, wickDownColor: colors.down,
+      // precision/minMove come from pipDigits: the series must format
+      // prices to the instrument's tick size, not a fixed decimal count.
       priceFormat: { type: "price", precision: pipDigits, minMove },
-      // The bid/ask price lines are authoritative at the right edge — hide
-      // the series' own last-value and price-line.
+      // The last-value label and the series' own price line would collide
+      // with the bid/ask lines drawn elsewhere. Suppress both.
       lastValueVisible: false,
       priceLineVisible: false,
     });
     candleSeriesRef.current = candleSeries;
 
-    // ── 3. Volume series ──────────────────────────────────────
+    // ── Volume series ─────────────────────────────────────────────────
+    // Its own price scale ("volume") so it can occupy the bottom band of
+    // the chart without distorting the candle scale.
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
@@ -164,7 +151,10 @@ export function useChartInstance(args: Args) {
     chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     volumeSeriesRef.current = volumeSeries;
 
-    // ── 4. Auto-resize ────────────────────────────────────────
+    // ── Auto-resize ───────────────────────────────────────────────────
+    // lightweight-charts doesn't respond to CSS resizes on its own — the
+    // canvas has a fixed pixel size set at create time. The ResizeObserver
+    // keeps it in sync with the container.
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         chart.applyOptions({ width: entry.contentRect.width, height: entry.contentRect.height });
@@ -172,60 +162,35 @@ export function useChartInstance(args: Args) {
     });
     ro.observe(containerRef.current);
 
-    // ── 5. Drawing manager ────────────────────────────────────
-    const manager = new DrawingToolsManager({
-      chart,
-      series: candleSeries,
-      container: containerRef.current,
-      intervalSec: (TF_INTERVAL_MS[timeframeRef.current] ?? 60_000) / 1000,
-      timeframe: timeframeRef.current,
-      accountEquity: accountEquityRef.current,
-      callbacks: {
-        onAdd: (d) => onAddDrawingRef.current(d),
-        onUpdate: (d) => onUpdateDrawingRef.current?.(d),
-        onRemove: (id) => onRemoveDrawingRef.current?.(id),
-        onToolFinished: () => onDrawingCompleteRef.current?.(),
-        onSelectionChange: onDrawingSelectionChange,
-        onRequestSettings: onDrawingRequestSettings,
-        onContextMenu: (id, x, y) => { onDrawingMenuOpened(); onDrawingContextMenu(id, x, y); },
-        onSelectTool: (t) => onDrawingToolSelectRef.current?.(t),
-        onUndo: () => onUndoDrawingRef.current?.(),
-        onRedo: () => onRedoDrawingRef.current?.(),
-      },
-    });
-
-    // Seed with the current state so nothing is empty until the first prop change.
-    manager.setDrawings(drawingsRef.current);
-    manager.setTool(drawingToolRef.current);
-    manager.setMagnetMode(magnetRef.current);
-    manager.setStyleDefaults(getStyleDefaults());
-    manager.setStayInDrawingMode(stayInModeRef.current);
-    drawingManagerRef.current = manager;
-
-    // Drawing style defaults live in a separate store that emits a window
-    // event when they change. Refresh the manager whenever it fires.
-    const onStyleChange = () => manager.setStyleDefaults(getStyleDefaults());
-    window.addEventListener(DRAWING_STYLES_EVENT, onStyleChange);
-
-    // ── 7. Signal other hooks that the chart exists ───────────
+    // Signal other hooks that the chart exists. Runs *after* the refs are
+    // assigned above, so any hook that fires off `chartEpoch` will find a
+    // fully-initialised chart when it re-attaches.
     setChartEpoch((e) => e + 1);
 
-    // ── 8. Teardown ───────────────────────────────────────────
+    // ── Teardown ──────────────────────────────────────────────────────
+    // Runs when a dep changes (rebuild) or the component unmounts. Order
+    // matters a little: stop the observer first so it doesn't fire against
+    // a destroyed chart, then remove the chart, then clear the refs so any
+    // other hook reading them sees null rather than a dangling instance.
     return () => {
-      window.removeEventListener(DRAWING_STYLES_EVENT, onStyleChange);
       ro.disconnect();
-      manager.destroy();
-      drawingManagerRef.current = null;
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the refs are stable;
+    // The dep array is deliberately narrow: refs are stable (their identity
+    // never changes) and the timeframe is read through a ref. Only things
+    // that genuinely require a fresh chart are listed. Do NOT add the refs
+    // or `timeframe` here — you'll get an infinite rebuild loop, because
+    // every render would re-trigger the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refs are stable;
     // the effect only re-runs on things that should recreate the chart.
   }, [isDark, pipDigits, selectedSymbol,
       colors.background, colors.text, colors.grid, colors.crosshair,
       colors.watermark, colors.up, colors.down]);
 
-  return { chartEpoch, drawingManagerRef };
+  // `chartEpoch` is the only thing the caller needs. The refs were passed
+  // in, so they're already shared.
+  return { chartEpoch };
 }

@@ -1,24 +1,21 @@
 import { useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
-import type { Candle } from "../../../services/schemas";
 import { getCandlesInRange } from "@/services/api/01_fetchCandles";
+import { StrategyCandle } from "@/services/utils/01_interfaces";
 
-// Bars-per-page, expressed as a time window per timeframe. Sized so each page
-// is ~2k bars — fast to fetch, and small enough that a few pages fit
-// comfortably in the sliding render window.
 const PAGE_WINDOW_MS: Record<string, number> = {
-  "1m":  7  * 86_400_000,
-  "5m":  30 * 86_400_000,
+  "1m": 7 * 86_400_000,
+  "5m": 30 * 86_400_000,
   "15m": 90 * 86_400_000,
   "30m": 180 * 86_400_000,
-  "1h":  365 * 86_400_000,
-  "4h":  730 * 86_400_000,
-  "1d":  1825 * 86_400_000,
-  "1w":  3650 * 86_400_000,
+  "1h": 365 * 86_400_000,
+  "4h": 730 * 86_400_000,
+  "1d": 1825 * 86_400_000,
+  "1w": 3650 * 86_400_000,
 };
 
 export interface InfiniteCandlesResult {
   /** Flattened, chronologically-sorted candles from every loaded page. */
-  allCandles: Candle[];
+  allCandles: StrategyCandle[];
   /** Triggers a fetch of the next (older) page. */
   fetchOlder: () => void;
   /** True while the NEXT (older) page is being fetched. */
@@ -36,9 +33,9 @@ export function useInfiniteCandles(
   const windowMs = PAGE_WINDOW_MS[timeframe] ?? 7 * 86_400_000;
 
   const query = useInfiniteQuery<
-    Candle[],
+    StrategyCandle[],
     Error,
-    InfiniteData<Candle[], { to: number }>,
+    InfiniteData<StrategyCandle[], { to: number }>,
     readonly unknown[],
     { to: number }
   >({
@@ -47,10 +44,10 @@ export function useInfiniteCandles(
     queryFn: ({ pageParam }) =>
       getCandlesInRange(symbol, timeframe, pageParam.to - windowMs, pageParam.to),
     getNextPageParam: (lastPage) => {
-      // Empty page = no more history. This is the authoritative stop.
       if (lastPage.length === 0) return undefined;
-      const oldestSec = lastPage[0]!.time as unknown as number;
-      // Next window strictly before the oldest bar we have.
+      // Use the raw timestamp (unix seconds) — not `time`, which may be
+      // display-shifted. Anchor the next fetch strictly before it.
+      const oldestSec = lastPage[0]!.timestamp;
       return { to: oldestSec * 1000 - 1 };
     },
     // Historical pages never change — cache them indefinitely. Only the
@@ -68,7 +65,7 @@ export function useInfiniteCandles(
   // pages[N] is oldest. Reverse the page order before flattening.
   const allCandles = (() => {
     if (!query.data) return [];
-    const byTime = new Map<number, Candle>();
+    const byTime = new Map<number, StrategyCandle>();
     for (const page of query.data.pages) {
       for (const c of page) byTime.set(c.time as unknown as number, c);
     }

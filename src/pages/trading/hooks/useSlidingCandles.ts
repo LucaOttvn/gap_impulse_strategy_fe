@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Candle } from "../../../services/schemas";
 import type { ChartRefs } from "./useChartInstance";
+import { StrategyCandle } from "@/services/utils/01_interfaces";
 
 interface Args {
   chartRefs: ChartRefs;
   /** Every loaded candle, oldest → newest. */
-  allCandles: Candle[];
+  allCandles: StrategyCandle[];
   /** Bumps when the chart is recreated — resets the window. */
   chartEpoch: number;
   /** Called when the user has scrolled past the oldest loaded bar. */
@@ -31,7 +31,7 @@ const SLIDE_BARS = 3_000;     // how far the window shifts per slide
  * (The previous version bumped rightOffset by the prepend amount, which
  * shifted the slice one full page past the user's viewport on every fetch.)
  */
-export function useSlidingCandles(args: Args): Candle[] {
+export function useSlidingCandles(args: Args): StrategyCandle[] {
   const {
     chartRefs, allCandles, chartEpoch,
     onNeedOlder, canLoadOlder = false, isFetchingOlder = false,

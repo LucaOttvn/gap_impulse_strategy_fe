@@ -1,22 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
-import { type IPriceLine, type ISeriesPrimitive, type Time } from "lightweight-charts";
-import type { Candle, Order, Position, Symbol } from "../../../services/schemas";
-import type { Timeframe } from "../constants";
-import {
-  addOrderOverlay,
-  addPositionOverlay,
-  clearPriceLines,
-  type OverlayOpts,
-  type SlTpMap,
-} from "../chartPositionOverlays";
-import { attachPlugins, detachPlugins, detachPrimitiveArrays } from "../chartPlugins";
-import type { RtCtx } from "../chartRealtime";
-import { useChallengeLevels } from "../useChallengeLevels";
-import {
-  drawGapsImpulseStrategy,
-  type OperationRecord,
-} from "@/services/utils/strategy";
-import { highlightOpenWindow } from "@/services/utils/openWindow";
+import { useRef } from "react";
+import type { OperationRecord } from "@/services/utils/strategy";
+import type { SlTpMap } from "../chartPositionOverlays";
 import type { ChartRefs } from "./useChartInstance";
 
 interface ChartPrefsSlice {
@@ -30,163 +14,27 @@ interface ChartPrefsSlice {
 interface Args {
   chartRefs: ChartRefs;
   chartEpoch: number;
-  colors: RtCtx["colors"];
+  colors: unknown;
   selectedSymbol: string;
-  timeframe: Timeframe;
-  symbolInfo?: Symbol;
-  positions: Position[];
-  orders: Order[];
+  timeframe: string;
+  symbolInfo?: unknown;
+  positions: unknown[];
+  orders: unknown[];
   accountId?: string | null;
   accountEquity: number;
-  tick?: {bid: number; ask: number; timestamp: number};
-  candles: Candle[];
-  /** Only used as a trigger — overlays rebuild when the series' data changes. */
+  tick?: { bid: number; ask: number; timestamp: number };
+  candles: unknown[];
   chartData: unknown[];
   activePlugins: string[];
   isDark: boolean;
   chartPrefs: ChartPrefsSlice;
-  /**
-   * Called every time the strategy re-runs and produces a fresh list of
-   * operation records. Use this to feed a stats UI (win rate, PnL, etc.).
-   */
   onRecordsChange?: (records: OperationRecord[]) => void;
 }
 
-/**
- * Everything drawn on top of the candles:
- *   • position / order price lines
- *   • chart plugins (session breaks etc.)
- *   • strategy primitives (gap-impulse + session-open band)
- *   • challenge-aware rule levels
- *
- * Returns `slTpLinesRef` — the map the drag hook reads to move SL/TP lines.
- * Returns `recordsRef` — the latest list of operation records from the
- * strategy. Read `recordsRef.current` at any time (no re-render triggered).
- */
-export function useChartOverlays(args: Args) {
-  const {
-    chartRefs, chartEpoch, colors, selectedSymbol, timeframe, symbolInfo,
-    positions, orders, accountId, accountEquity, tick, candles, chartData,
-    activePlugins, isDark, chartPrefs, onRecordsChange,
-  } = args;
-
-  const { candle: candleSeriesRef } = chartRefs;
-
-  // ── Refs owned by this hook ──
-  const priceLineRef = useRef<IPriceLine[]>([]);
+export function useChartOverlays(_args: Args) {
+  // Kept for API compatibility. Always empty.
   const slTpLinesRef = useRef<SlTpMap>(new Map());
-  const chartPluginsRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const strategyPrimitivesRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const dayOpenBandRef = useRef<ISeriesPrimitive<Time>[]>([]);
-  const dayLevelsRef = useRef<ISeriesPrimitive<Time>[]>([]);
-
-  // Latest operation records from the strategy. Populated every time the
-  // strategy re-runs; read by the parent via the returned ref.
   const recordsRef = useRef<OperationRecord[]>([]);
-
-  // Stable ref for the callback so the strategy effect doesn't re-run when
-  // the parent passes a new function identity.
-  const onRecordsChangeRef = useRef(onRecordsChange);
-  onRecordsChangeRef.current = onRecordsChange;
-
-  // ── Content signature for the strategy primitives ──
-  const lastCandleSigRef = useRef<string>("");
-  const candleSig = candles.length === 0
-    ? ""
-    : `${candles.length}:${candles[0]!.time}:${candles[candles.length - 1]!.time}`;
-
-  // ── Challenge-aware rule levels ──
-  const challengeFlags = useMemo(
-    () => ({
-      enabled: chartPrefs.challengeOverlay && !!accountId,
-      dailyLoss: chartPrefs.challengeDailyLossLine,
-      maxDrawdown: chartPrefs.challengeMaxDrawdownLine,
-      profitTarget: chartPrefs.challengeProfitTargetLine,
-    }),
-    [
-      chartPrefs.challengeOverlay,
-      chartPrefs.challengeDailyLossLine,
-      chartPrefs.challengeMaxDrawdownLine,
-      chartPrefs.challengeProfitTargetLine,
-      accountId,
-    ],
-  );
-  useChallengeLevels({
-    accountId,
-    selectedSymbol,
-    positions,
-    tick,
-    contractSize: symbolInfo?.contractSize || 100000,
-    accountEquity,
-    candleSeriesRef,
-    flags: challengeFlags,
-    chartEpoch,
-  });
-
-  // ── Position / order price lines ──
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series) return;
-    const lines = priceLineRef.current;
-    clearPriceLines(series, lines);
-    priceLineRef.current = [];
-    slTpLinesRef.current.clear();
-    if (!chartPrefs.overlayPositionsOnChart) return;
-
-    const opts: OverlayOpts = {
-      symbol: selectedSymbol,
-      colors,
-      contractSize: symbolInfo?.contractSize || 100000,
-    };
-    for (const pos of positions) {
-      addPositionOverlay(series, pos, opts, priceLineRef.current, slTpLinesRef.current);
-    }
-    for (const ord of orders) {
-      addOrderOverlay(series, ord, selectedSymbol, colors.orderLine, priceLineRef.current);
-    }
-  }, [
-    positions, orders, selectedSymbol, chartData, symbolInfo, colors,
-    chartPrefs.overlayPositionsOnChart, candleSeriesRef,
-  ]);
-
-  // ── Strategy primitives (gap-impulse + NY session open band) ──
-  // drawGapsImpulseStrategy now returns { primitives, records }. The
-  // records list is captured into recordsRef and forwarded to the parent
-  // via onRecordsChange.
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series || candles.length === 0) return;
-
-    if (candleSig === lastCandleSigRef.current) return;
-    lastCandleSigRef.current = candleSig;
-
-    detachPrimitiveArrays(series, [
-      strategyPrimitivesRef.current,
-      dayOpenBandRef.current,
-      dayLevelsRef.current,
-    ]);
-
-    const result = drawGapsImpulseStrategy(series, candles);
-    strategyPrimitivesRef.current = result.primitives;
-    recordsRef.current = result.records;
-    onRecordsChangeRef.current?.(result.records);
-
-    dayOpenBandRef.current = highlightOpenWindow(series, candles, {
-      minutes: 15,
-      timeZone: "America/New_York",
-      fill: "rgba(255, 200, 50, 0.10)",
-    });
-  }, [candleSig, chartEpoch, candleSeriesRef]);
-
-  // ── Chart plugins (session breaks etc.) ──
-  const symbolCategory = symbolInfo?.category;
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series) return;
-    detachPlugins(series, chartPluginsRef.current);
-    chartPluginsRef.current = [];
-    attachPlugins(series, activePlugins, { isDark, timeframe, symbolCategory }, chartPluginsRef.current);
-  }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory, candleSeriesRef]);
 
   return { slTpLinesRef, recordsRef };
 }
