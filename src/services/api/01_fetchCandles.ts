@@ -1,6 +1,6 @@
 import { UTCTimestamp } from "lightweight-charts";
 import { TIMEFRAME_MAP, toIsoDate, API_BASE, ApiError } from "../api";
-import { StrategyCandle } from "../utils/01_interfaces";
+import { Gap, StrategyCandle } from "../utils/01_interfaces";
 
 export async function getCandlesInRange(
   symbol: string,
@@ -36,6 +36,7 @@ export async function getCandlesInRange(
     blueLine: number | null;
     ema: number | null;
     emaNewDay: boolean | null;
+    gap: Gap | null
   }>;
 
   if (!Array.isArray(raw)) return [];
@@ -53,6 +54,7 @@ export async function getCandlesInRange(
     orangeLine: c.orangeLine ?? NaN,
     blueLine: c.blueLine ?? NaN,
     ema: c.ema ?? NaN,
-    emaNewDay: c.emaNewDay ?? false
+    emaNewDay: c.emaNewDay ?? false,
+    gap: c.gap ?? null
   }));
 }

@@ -2,16 +2,9 @@ import { ISeriesApi, ISeriesPrimitive, Time } from "lightweight-charts";
 import { Candle } from "../schemas";
 import { OPENING_WINDOW_SEC } from "./strategy";
 import { GapRectanglePrimitive } from "./primitives";
+import { Gap } from "./01_interfaces";
 
 export type Direction = "bullish" | "bearish";
-
-export interface Gap {
-    startTime: number; // unix seconds — left edge of the rectangle
-    endTime: number;   // unix seconds — right edge of the rectangle
-    topPrice: number;  // upper edge
-    bottomPrice: number; // lower edge
-    direction: Direction
-}
 
 // US equities regular trading hours: 9:30 AM – 4:00 PM ET.
 // 6.5 hours = 23,400 seconds.

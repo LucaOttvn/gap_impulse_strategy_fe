@@ -14,6 +14,7 @@ import { useDayLevels } from "@/pages/trading/hooks/01_useDayLevels.ts";
 import { StrategyCandle } from "@/services/utils/01_interfaces.ts";
 import { useFibLines } from "@/pages/trading/hooks/03_useFibLines.ts";
 import { useEmaLine } from "@/pages/trading/hooks/04_useEmaLine.ts";
+import { useGapRects } from "@/pages/trading/hooks/05_useGapRect.ts";
 
 interface ChartPanelProps {
   allCandles: StrategyCandle[];
@@ -141,6 +142,7 @@ export function ChartPanel(props: ChartPanelProps) {
   // Fib overlays
   useFibLines(chartRefs, visibleCandles, chartEpoch);
   useEmaLine(chartRefs, visibleCandles, chartEpoch)
+  useGapRects(chartRefs, visibleCandles, chartEpoch);
 
   // Legend + countdown
   const {legend, countdown, setLegend} = useChartLegend({
