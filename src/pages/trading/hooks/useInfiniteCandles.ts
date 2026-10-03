@@ -1,6 +1,6 @@
 import { useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
-import { getCandlesInRange, type CandleRangeResult } from "../../../services/api/candles";
 import type { Candle } from "../../../services/schemas";
+import { getCandlesInRange } from "@/services/api/01_fetchCandles";
 
 // Bars-per-page, expressed as a time window per timeframe. Sized so each page
 // is ~2k bars — fast to fetch, and small enough that a few pages fit
@@ -36,9 +36,9 @@ export function useInfiniteCandles(
   const windowMs = PAGE_WINDOW_MS[timeframe] ?? 7 * 86_400_000;
 
   const query = useInfiniteQuery<
-    CandleRangeResult,
+    Candle[],
     Error,
-    InfiniteData<CandleRangeResult, { to: number }>,
+    InfiniteData<Candle[], { to: number }>,
     readonly unknown[],
     { to: number }
   >({
@@ -48,15 +48,15 @@ export function useInfiniteCandles(
       getCandlesInRange(symbol, timeframe, pageParam.to - windowMs, pageParam.to),
     getNextPageParam: (lastPage) => {
       // Empty page = no more history. This is the authoritative stop.
-      if (lastPage.candles.length === 0) return undefined;
-      const oldestSec = lastPage.candles[0]!.time as unknown as number;
+      if (lastPage.length === 0) return undefined;
+      const oldestSec = lastPage[0]!.time as unknown as number;
       // Next window strictly before the oldest bar we have.
       return { to: oldestSec * 1000 - 1 };
     },
     // Historical pages never change — cache them indefinitely. Only the
     // newest page can be extended by live bars.
     staleTime: (q) => {
-      const newest = q.state.data?.pages[0]?.candles.at(-1);
+      const newest = q.state.data?.pages[0]?.at(-1);
       if (!newest) return 30_000;
       const ageMs = Date.now() - (newest.time as unknown as number) * 1000;
       return ageMs > 60 * 60 * 1000 ? Infinity : 30_000;
@@ -70,7 +70,7 @@ export function useInfiniteCandles(
     if (!query.data) return [];
     const byTime = new Map<number, Candle>();
     for (const page of query.data.pages) {
-      for (const c of page.candles) byTime.set(c.time as unknown as number, c);
+      for (const c of page) byTime.set(c.time as unknown as number, c);
     }
     return [...byTime.values()].sort(
       (a, b) => (a.time as unknown as number) - (b.time as unknown as number),

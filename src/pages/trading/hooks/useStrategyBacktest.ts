@@ -22,13 +22,13 @@ import type { Timeframe } from "../constants";
  * becomes a UX problem.
  */
 const BACKTEST_YEARS: Record<string, number> = {
-  "1m":  5,
-  "5m":  5,
-  "15m": 5,
-  "30m": 5,
-  "1h":  5,
-  "4h":  5,
-  "1d":  5,
+  "1m":  1,
+  "5m":  1,
+  "15m": 1,
+  "30m": 1,
+  "1h":  1,
+  "4h":  1,
+  "1d":  1,
   "1w":  10,
 };
 

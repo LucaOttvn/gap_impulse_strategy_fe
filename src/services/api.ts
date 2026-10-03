@@ -1,9 +1,8 @@
 // export const API_BASE = "https://gap-impulse-strategy-be.onrender.com";
 export const API_BASE = "http://localhost:3000";
 import { demoApi } from "./demo/api.ts";
-import { getCandlesWithMeta } from "./api/candles.ts";
 import { SYMBOLS } from "./api/symbols.ts";
-import { Candle } from "./schemas.ts";
+import { getCandlesInRange } from "./api/01_fetchCandles.ts";
 
 
 export class ApiError extends Error {
@@ -64,12 +63,6 @@ export const toIsoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 const liveApi = {
   ...demoApi,
 
-  getCandles: (symbol: string, timeframe: string) =>
-    getCandlesWithMeta(symbol, timeframe),
-
-  getCandlesWithMeta: (symbol: string, timeframe: string) =>
-    getCandlesWithMeta(symbol, timeframe),
-
   getCandlesInRange,
 
   getSymbols: () => Promise.resolve(SYMBOLS),
@@ -82,47 +75,3 @@ export const api = new Proxy(liveApi as Record<string, unknown>, {
   },
 }) as typeof liveApi & Record<string, (...args: any[]) => Promise<unknown>>;
 
-// ── Add near the top of services/api.ts, next to getCandlesWithMeta ──
-
-/**
- * Fetch one page of candles for [fromMs, toMs]. The caller decides the window
- * size — this function just forwards it to the backend's /api/stocks endpoint,
- * which accepts from/to as ISO timestamps.
- */
-export async function getCandlesInRange(
-  symbol: string,
-  timeframe: string,
-  fromMs: number,
-  toMs: number,
-): Promise<{ candles: Candle[] }> {
-  // Reuse your existing TF → (multiplier, timespan) table.
-  const [multiplier, timespan] = TIMEFRAME_MAP[timeframe] ?? ["1", "minute"];
-
-  // Send YYYY-MM-DD — that's what makes the cache filename clean and stable.
-  // (Massive accepts this format too, so the backend can pass it through.)
-  const toYmd = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-
-  const url = new URL(`${API_BASE}/api/stocks`);
-  url.searchParams.set("ticker", symbol);
-  url.searchParams.set("multiplier", multiplier);
-  url.searchParams.set("timespan", timespan);
-  url.searchParams.set("from", toYmd(fromMs));
-  url.searchParams.set("to", toYmd(toMs));
-  url.searchParams.set("session", "regular");
-
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`candles ${res.status}`);
-  const json = await res.json();
-
-  // Massive's response shape: { results: [{ t, o, h, l, c, v }] }
-  const candles: Candle[] = (json.results ?? []).map((r: any) => ({
-    time: Math.floor(r.t / 1000),   // seconds — lightweight-charts wants seconds
-    open: r.o,
-    high: r.h,
-    low: r.l,
-    close: r.c,
-    volume: r.v,
-  }));
-
-  return { candles };
-}
