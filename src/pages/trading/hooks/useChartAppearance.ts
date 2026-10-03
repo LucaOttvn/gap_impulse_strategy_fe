@@ -1,7 +1,5 @@
 import { useEffect } from "react";
 import type { Timeframe } from "../constants";
-import { TF_INTERVAL_MS } from "../constants";
-import type { DrawingToolsManager } from "../../../lib/chart-plugins/drawing-tools/manager";
 import type { RtCtx } from "../chartRealtime";
 import type { ChartRefs } from "./useChartInstance";
 
@@ -18,8 +16,6 @@ interface Args {
   colors: RtCtx["colors"];
   timeframe: Timeframe;
   chartPrefs: ChartPrefsSlice;
-  /** Owned by useChartInstance; needs re-pointing when the TF changes. */
-  drawingManagerRef: React.RefObject<DrawingToolsManager | null>;
 }
 
 /**
@@ -35,7 +31,6 @@ export function useChartAppearance({
   colors,
   timeframe,
   chartPrefs,
-  drawingManagerRef,
 }: Args) {
   const { chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef } = chartRefs;
 
@@ -108,6 +103,5 @@ export function useChartAppearance({
         },
       },
     });
-    drawingManagerRef.current?.updateTimeframe(timeframe, (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000);
-  }, [timeframe, chartRef, drawingManagerRef]);
+  }, [timeframe, chartRef]);
 }

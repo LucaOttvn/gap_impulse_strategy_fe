@@ -31,6 +31,7 @@ export function useEmaLine(
     const ema = createPlotLine(series, { color, lineWidth: 1, mode: "line" });
 
     for (const c of candles) {
+      if (c.emaNewDay) ema.add(c.time, null);       // break the line at session start
       ema.add(c.time, Number.isNaN(c.ema) ? null : c.ema);
     }
 

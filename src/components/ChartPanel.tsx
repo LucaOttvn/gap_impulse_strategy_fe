@@ -10,14 +10,12 @@ import { useChartLegend } from "@/pages/trading/hooks/useChartLegend.ts";
 import { useChartDataFlow } from "@/pages/trading/hooks/useChartDataFlow.ts";
 import { useChartAppearance } from "@/pages/trading/hooks/useChartAppearance.ts";
 import { useSlidingCandles } from "@/pages/trading/hooks/useSlidingCandles.ts";
-import type { DrawingToolsManager } from "@/lib/chart-plugins/drawing-tools/manager";
 import { useDayLevels } from "@/pages/trading/hooks/01_useDayLevels.ts";
 import { StrategyCandle } from "@/services/utils/01_interfaces.ts";
 import { useFibLines } from "@/pages/trading/hooks/03_useFibLines.ts";
 import { useEmaLine } from "@/pages/trading/hooks/04_useEmaLine.ts";
 
-export interface ChartPanelProps {
-  /** Every loaded candle, oldest → newest. The sliding window slices this. */
+interface ChartPanelProps {
   allCandles: StrategyCandle[];
   selectedSymbol: string;
   timeframe: Timeframe;
@@ -108,18 +106,13 @@ export function ChartPanel(props: ChartPanelProps) {
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const chartRefs: ChartRefs = useMemo(() => ({chart: chartRef, candle: candleSeriesRef, volume: volumeSeriesRef}), []);
-
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const legendVolRef = useRef<number>(0);
-
-  // Kept only so useChartAppearance's signature is satisfied. Always null —
-  // there's no drawing manager anymore.
-  const drawingManagerRef = useRef<DrawingToolsManager | null>(null);
 
   const chartPrefs = useChartPreferences();
   const colors = useMemo(() => mergeChartColors(isDark ? CHART_COLORS.dark : CHART_COLORS.light, chartPrefs), [isDark, chartPrefs]);
 
-  // ── 1. Chart instance ──
+  // Chart instance
   const {chartEpoch} = useChartInstance({
     containerRef,
     chartRefs,
@@ -130,11 +123,7 @@ export function ChartPanel(props: ChartPanelProps) {
     timeframe,
   });
 
-  // ── 2. Sliding window ──
-  // Bounds what the chart actually renders. `allCandles` (the React Query
-  // cache) can be arbitrarily large; `visibleCandles` is at most 10k bars.
-  // Because allCandles is StrategyCandle[], visibleCandles carries the
-  // strategy fields through the slice.
+  // Sliding window
   const visibleCandles = useSlidingCandles({
     chartRefs,
     allCandles,
@@ -144,18 +133,16 @@ export function ChartPanel(props: ChartPanelProps) {
     isFetchingOlder,
   });
 
-  // ── 2a. Day high / low overlays ──
+  // Day high / low overlays
   useDayLevels(chartRefs, visibleCandles, chartEpoch, {
     lineWidth: 2,
   });
 
-  // ── 2b. Fib overlays ──
-  // Reads orangeLine/blueLine from each enriched candle. NaN → null, which
-  // breaks the step line on candles before the first qualifying gap.
+  // Fib overlays
   useFibLines(chartRefs, visibleCandles, chartEpoch);
   useEmaLine(chartRefs, visibleCandles, chartEpoch)
 
-  // ── 3. Legend + countdown ──
+  // Legend + countdown
   const {legend, countdown, setLegend} = useChartLegend({
     chartRefs,
     chartEpoch,
@@ -164,8 +151,7 @@ export function ChartPanel(props: ChartPanelProps) {
     legendVolRef,
   });
 
-  // ── 4. Realtime data pipeline ──
-  // Feeds candles + live tick into the series. No drawings are passed in.
+  // Realtime data pipeline
   useChartDataFlow({
     chartRefs,
     colors,
@@ -184,15 +170,13 @@ export function ChartPanel(props: ChartPanelProps) {
     legendVolRef,
   });
 
-  // ── 5. Appearance ──
-  // Colors, wicks, grid, timeframe formatting.
+  // Appearance
   useChartAppearance({
     chartRefs,
     chartEpoch,
     colors,
     timeframe,
     chartPrefs,
-    drawingManagerRef,
   });
 
   return (
@@ -208,12 +192,6 @@ export function ChartPanel(props: ChartPanelProps) {
         showCountdown={chartPrefs.showCountdown}
       />
 
-      {/* Loading overlay — covers the chart with a blurred, tinted backdrop
-          whenever candles are being fetched. Visible on:
-            • initial mount (first page load)
-            • scroll-back fetches (loading older bars)
-          Blocks interaction so the user can't pan while the data is
-          settling. Fades naturally with the CSS backdrop-blur transition. */}
       {isLoadingCandles && (
         <div className="absolute inset-0 z-40 flex items-center justify-center backdrop-blur-sm bg-background/50">
           <div className="flex flex-col items-center gap-3 px-6 py-5 rounded-2xl bg-card border border-border shadow-2xl">
