@@ -58,8 +58,6 @@ function StatsHeader({stats}: {stats: OperationStats}) {
       <StatCard label="Win Rate" value={`${(stats.winRate * 100).toFixed(1)}%`} tone={stats.winRate >= 0.5 ? "pos" : "neg"} />
       <StatCard label="Wins / Losses" value={`${stats.wins} / ${stats.losses}`} />
       <StatCard label="TP / SL / EOD" value={`${stats.tp} / ${stats.sl} / ${stats.dayEnd}`} />
-      <StatCard label="Total PnL" value={fmtPct(stats.totalPnlPct)} tone={stats.totalPnlPct >= 0 ? "pos" : "neg"} />
-      <StatCard label="Avg PnL / Trade" value={fmtPct(stats.avgPnlPct)} tone={stats.avgPnlPct >= 0 ? "pos" : "neg"} />
       <StatCard label="Profit Factor" value={stats.profitFactor === Infinity ? "∞" : stats.profitFactor.toFixed(2)} tone={stats.profitFactor >= 1 ? "pos" : "neg"} />
     </div>
   );
